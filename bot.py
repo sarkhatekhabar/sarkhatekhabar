@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 
-TOKEN = "8821954219:AAFiEXTzcuKoUm4RdMd8ZUD7__csVUsgdEU"
+TOKEN = ""
 CHANNEL = "@SARKHATEKHABARNEW"
 
 RSS_URL = "https://www.irna.ir/rss"
