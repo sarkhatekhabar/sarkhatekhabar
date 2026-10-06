@@ -1,3 +1,4 @@
+import os
 import feedparser
 import asyncio
 import requests
@@ -6,7 +7,7 @@ from bs4 import BeautifulSoup
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application
 
-TOKEN = ""
+TOKEN = os.getenv("TOKEN")
 CHANNEL = "@SARKHATEKHABARNEW"
 
 RSS_URL = "https://www.irna.ir/rss"
