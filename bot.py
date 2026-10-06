@@ -91,10 +91,10 @@ async def check_news(app):
                         ]
                     ])
 
-                    image = get_image(link)
-print("عکس پیدا شد:", bool(image))
+                image = get_image(link)
 
-if image:
+if image:    
+
 
                     if image:
                         image.name = "news.jpg"
