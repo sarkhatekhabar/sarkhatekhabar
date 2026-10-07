@@ -96,7 +96,7 @@ async def check_news(app):
 if image:    
 
 
-                    if image:
+                                        if image:
                         image.name = "news.jpg"
 
                         await app.bot.send_photo(
@@ -119,10 +119,8 @@ if image:
 
                     sent_links.add(link)
 
-        except Exception as e:
-            print("خطا:", e)
-
-        await asyncio.sleep(300)
+                except Exception as e:
+                    print("خطا:", e) 
 
 
 async def main():
