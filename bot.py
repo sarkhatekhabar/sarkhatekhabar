@@ -10,7 +10,18 @@ from telegram.ext import Application
 TOKEN = os.getenv("TOKEN")
 CHANNEL = "@SARKHATEKHABARNEW"
 
-RSS_URL = "https://www.irna.ir/rss"
+RSS_FEEDS = {
+    "ایرنا": "https://www.irna.ir/rss",
+    "ایسنا": "https://www.isna.ir/rss",
+    "مهر": "https://www.mehrnews.com/rss",
+    "خبرآنلاین": "https://www.khabaronline.ir/rss",
+    "باشگاه خبرنگاران": "https://www.yjc.ir/fa/rss/allnews",
+    "تابناک": "https://www.tabnak.ir/fa/rss/allnews",
+    "عصر ایران": "https://www.asriran.com/fa/rss/allnews",
+    "تسنیم": "https://www.tasnimnews.com/fa/rss",
+    "ورزش سه": "https://www.varzesh3.com/rss/all",
+    "زومیت": "https://www.zoomit.ir/feed/",
+}
 
 sent_links = set()
 
@@ -52,72 +63,91 @@ def get_image(url):
     return None
 
 
+async def send_news(app, item, source):
+    try:
+        link = item.get("link", "")
+        title = item.get("title", "")
+        summary = item.get("summary", "")
+
+        if not link or link in sent_links:
+            return
+
+        text = f"""📰 {title}
+
+{summary[:500]}
+
+📡 منبع: {source}"""
+
+        keyboard = InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔗 ادامه خبر",
+                    url=link
+                )
+            ]
+        ])
+
+        image = get_image(link)
+
+        if image:
+            image.name = "news.jpg"
+
+            await app.bot.send_photo(
+                chat_id=CHANNEL,
+                photo=image,
+                caption=text,
+                reply_markup=keyboard
+            )
+
+            print("خبر + عکس ارسال شد:", title)
+
+        else:
+            await app.bot.send_message(
+                chat_id=CHANNEL,
+                text=text,
+                reply_markup=keyboard
+            )
+
+            print("خبر بدون عکس ارسال شد:", title)
+
+        sent_links.add(link)
+
+    except Exception as e:
+        print("خطا در ارسال خبر:", e)
+
+
 async def check_news(app):
     first_run = True
 
     while True:
-        try:
-            feed = feedparser.parse(RSS_URL)
 
-            if feed.entries:
+        for source, rss_url in RSS_FEEDS.items():
+
+            try:
+                print("بررسی:", source)
+
+                feed = feedparser.parse(rss_url)
+
+                if not feed.entries:
+                    print("خبری پیدا نشد:", source)
+                    continue
 
                 if first_run:
                     items = [feed.entries[0]]
-                    first_run = False
                 else:
                     items = reversed(feed.entries)
 
                 for item in items:
+                    await send_news(app, item, source)
 
-                    link = item.get("link", "")
-                    title = item.get("title", "")
-                    summary = item.get("summary", "")
+                    await asyncio.sleep(2)
 
-                    if not link or link in sent_links:
-                        continue
+            except Exception as e:
+                print("خطا در منبع", source, ":", e)
 
-                    text = f"""📰 {title}
+        first_run = False
 
-{summary[:500]}
-
-📡 منبع: خبرگزاری ایرنا"""
-
-                    keyboard = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton(
-                                "🔗 ادامه خبر",
-                                url=link
-                            )
-                        ]
-                    ])
-
-                    image = get_image(link)
-
-                    if image:
-                        image.name = "news.jpg"
-
-                        await app.bot.send_photo(
-                            chat_id=CHANNEL,
-                            photo=image,
-                            caption=text,
-                            reply_markup=keyboard
-                        )
-
-                        print("خبر + عکس ارسال شد:", title)
-
-                    else:
-                        await app.bot.send_message(
-                            chat_id=CHANNEL,
-                            text=text,
-                            reply_markup=keyboard
-                        )
-
-                        print("خبر بدون عکس ارسال شد:", title)
-
-                    sent_links.add(link)
-
-        except Exception as e:
-            print("خطا:", e)
+        print("دور بررسی منابع تمام شد.")
 
         await asyncio.sleep(300)
 
