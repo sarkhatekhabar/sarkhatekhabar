@@ -28,9 +28,7 @@ sent_links = set()
 
 def get_image(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
 
         r = requests.get(
             url,
@@ -46,6 +44,7 @@ def get_image(url):
         )
 
         if image and image.get("content"):
+
             image_url = image["content"]
 
             img = requests.get(
@@ -64,19 +63,23 @@ def get_image(url):
 
 
 async def send_news(app, item, source):
+
     try:
         link = item.get("link", "")
         title = item.get("title", "")
         summary = item.get("summary", "")
 
-        if not link or link in sent_links:
+        if not link:
+            return
+
+        if link in sent_links:
             return
 
         text = f"""📰 {title}
 
 {summary[:500]}
 
-📡 منبع: {source}"""
+📡 سرخط خبر"""
 
         keyboard = InlineKeyboardMarkup([
             [
@@ -90,6 +93,7 @@ async def send_news(app, item, source):
         image = get_image(link)
 
         if image:
+
             image.name = "news.jpg"
 
             await app.bot.send_photo(
@@ -102,6 +106,7 @@ async def send_news(app, item, source):
             print("خبر + عکس ارسال شد:", title)
 
         else:
+
             await app.bot.send_message(
                 chat_id=CHANNEL,
                 text=text,
@@ -117,6 +122,7 @@ async def send_news(app, item, source):
 
 
 async def check_news(app):
+
     first_run = True
 
     while True:
@@ -124,26 +130,42 @@ async def check_news(app):
         for source, rss_url in RSS_FEEDS.items():
 
             try:
+
                 print("بررسی:", source)
 
                 feed = feedparser.parse(rss_url)
 
                 if not feed.entries:
+
                     print("خبری پیدا نشد:", source)
                     continue
 
                 if first_run:
+
                     items = [feed.entries[0]]
+
                 else:
+
                     items = reversed(feed.entries)
 
                 for item in items:
-                    await send_news(app, item, source)
+
+                    await send_news(
+                        app,
+                        item,
+                        source
+                    )
 
                     await asyncio.sleep(2)
 
             except Exception as e:
-                print("خطا در منبع", source, ":", e)
+
+                print(
+                    "خطا در منبع",
+                    source,
+                    ":",
+                    e
+                )
 
         first_run = False
 
@@ -154,17 +176,27 @@ async def check_news(app):
 
 async def main():
 
-    app = Application.builder().token(TOKEN).build()
+    app = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .build()
+    )
 
     print("ربات خبری روشن شد...")
 
     await app.initialize()
     await app.start()
 
-    asyncio.create_task(check_news(app))
+    asyncio.create_task(
+        check_news(app)
+    )
 
     await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
+
     asyncio.run(main())
+
+
