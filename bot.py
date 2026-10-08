@@ -30,7 +30,7 @@ RSS_FEEDS = {
     "عصر ایران": "https://www.asriran.com/fa/rss/allnews",
     "تسنیم": "https://www.tasnimnews.com/fa/rss",
     "ورزش سه": "https://www.varzesh3.com/rss/all",
-    "زومیت": "https://www.zoomit.ir/feed/"
+    "زومیت": "https://www.zoomit.ir/feed/",
 }
 
 
@@ -38,8 +38,7 @@ def clean(text):
     if not text:
         return ""
 
-    soup = BeautifulSoup(text, "html.parser")
-    text = soup.get_text(" ", strip=True)
+    text = BeautifulSoup(str(text), "html.parser").get_text(" ", strip=True)
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
@@ -51,85 +50,137 @@ def short_summary(text):
     if not text:
         return "جزئیات بیشتر این خبر در منبع اصلی منتشر شده است."
 
-    text = re.sub(
-        r"(ادامه خبر|بیشتر بخوانید|منبع:).*",
-        "",
+    text = re.split(
+        r"(ادامه خبر|بیشتر بخوانید|منبع:)",
         text,
-        flags=re.IGNORECASE
-    ).strip()
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+    text = text.strip()
 
     if len(text) > 280:
-        text = text[:280].rsplit(" ", 1)[0] + "..."
+        text = text[:280]
+
+        if " " in text:
+            text = text.rsplit(" ", 1)[0]
+
+        text += "..."
 
     return text
 
 
 def category(title, source):
-    text = (title + " " + source).lower()
+    text = f"{title} {source}".lower()
 
-    sports = [
-        "فوتبال", "استقلال", "پرسپولیس",
-        "تیم ملی", "ورزش", "جام جهانی",
-        "قهرمانی", "لیگ"
+    sports_words = [
+        "ورزش",
+        "فوتبال",
+        "لیگ",
+        "بازیکن",
+        "تیم",
+        "جام جهانی",
+        "پرسپولیس",
+        "استقلال",
+        "والیبال",
+        "بسکتبال",
+        "کشتی",
     ]
 
-    economy = [
-        "دلار", "طلا", "سکه", "بورس",
-        "بنزین", "تورم", "اقتصاد",
-        "قیمت", "خودرو", "مسکن", "ارز"
+    economy_words = [
+        "اقتصاد",
+        "دلار",
+        "یورو",
+        "طلا",
+        "سکه",
+        "بورس",
+        "بانک",
+        "قیمت",
+        "بازار",
+        "تورم",
+        "مسکن",
+        "خودرو",
     ]
 
-    technology = [
-        "فناوری", "تکنولوژی", "هوش مصنوعی",
-        "موبایل", "گوشی", "اینترنت",
-        "گوگل", "اپل", "مایکروسافت"
+    technology_words = [
+        "فناوری",
+        "تکنولوژی",
+        "هوش مصنوعی",
+        "موبایل",
+        "گوشی",
+        "سامسونگ",
+        "اپل",
+        "اینترنت",
+        "نرم افزار",
+        "سخت افزار",
+        "ربات",
     ]
 
-    world = [
-        "آمریکا", "ترامپ", "اسرائیل",
-        "روسیه", "اوکراین", "چین",
-        "غزه", "فلسطین", "اروپا"
+    world_words = [
+        "آمریکا",
+        "اروپا",
+        "اسرائیل",
+        "غزه",
+        "فلسطین",
+        "اوکراین",
+        "روسیه",
+        "ترامپ",
+        "جهان",
+        "بین الملل",
+        "بین‌الملل",
     ]
 
-    if any(x in text for x in sports):
+    if any(word in text for word in sports_words):
         return "ورزشی"
 
-    if any(x in text for x in economy):
+    if any(word in text for word in economy_words):
         return "اقتصادی"
 
-    if any(x in text for x in technology):
+    if any(word in text for word in technology_words):
         return "فناوری"
 
-    if any(x in text for x in world):
+    if any(word in text for word in world_words):
         return "بین‌الملل"
 
     return "عمومی"
 
 
 def importance(title, summary):
-    text = (title + " " + summary).lower()
-
-    score = 0
+    text = f"{title} {summary}".lower()
 
     very_important = [
-        "فوری", "خبر فوری", "حمله", "جنگ",
-        "موشک", "انفجار", "زلزله", "سیل",
-        "آتش‌سوزی", "کشته", "مصدوم",
-        "ترور", "بازداشت", "تحریم",
-        "بحران", "هشدار"
+        "فوری",
+        "زلزله",
+        "سیل",
+        "جنگ",
+        "حمله",
+        "انفجار",
+        "آتش سوزی",
+        "آتش‌سوزی",
+        "کشته",
+        "مفقود",
+        "تحریم",
+        "رئیس جمهور",
+        "رئیس‌جمهور",
     ]
 
     important = [
-        "ایران", "رئیس جمهور", "رئیس‌جمهور",
-        "رهبر", "دولت", "مجلس", "وزیر",
-        "انتخابات", "آمریکا", "ترامپ",
-        "اسرائیل", "روسیه", "اوکراین",
-        "غزه", "فلسطین", "دلار", "طلا",
-        "سکه", "بورس", "بنزین", "تورم",
-        "قیمت", "فوتبال", "تیم ملی",
-        "استقلال", "پرسپولیس", "جام جهانی",
-        "هوش مصنوعی"
+        "دولت",
+        "مجلس",
+        "وزیر",
+        "وزارت",
+        "انتخابات",
+        "دلار",
+        "طلا",
+        "بنزین",
+        "قیمت",
+        "بازار",
+        "ایران",
+        "تهران",
+        "استان",
     ]
+
+    score = 0
 
     for word in very_important:
         if word in text:
@@ -144,79 +195,82 @@ def importance(title, summary):
 
 def get_feed(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
-
         response = requests.get(
             url,
-            headers=headers,
-            timeout=15
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "Chrome/120 Safari/537.36"
+                )
+            },
+            timeout=20,
         )
 
         response.raise_for_status()
 
         return feedparser.parse(response.content)
 
-    except Exception as error:
-        print("خطا در دریافت RSS:", error)
+    except Exception as e:
+        print(f"خطا در دریافت RSS: {e}")
         return None
 
 
 def get_media(url):
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
-
         response = requests.get(
             url,
-            headers=headers,
-            timeout=15
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 "
+                    "(Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 "
+                    "Chrome/120 Safari/537.36"
+                )
+            },
+            timeout=20,
         )
 
         response.raise_for_status()
 
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        tag = soup.find(
-            "meta",
-            property="og:image"
-        )
+        image_url = None
 
-        if not tag:
-            tag = soup.find(
+        og_image = soup.find("meta", property="og:image")
+
+        if og_image:
+            image_url = og_image.get("content")
+
+        if not image_url:
+            twitter_image = soup.find(
                 "meta",
-                attrs={"name": "twitter:image"}
+                attrs={"name": "twitter:image"},
             )
 
-        if tag:
-            image_url = tag.get("content")
+            if twitter_image:
+                image_url = twitter_image.get("content")
 
-            if image_url:
-                image_response = requests.get(
-                    image_url,
-                    headers=headers,
-                    timeout=15
-                )
+        if not image_url:
+            return None
 
-                image_response.raise_for_status()
+        image_response = requests.get(
+            image_url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=20,
+        )
 
-                image = BytesIO(
-                    image_response.content
-                )
+        image_response.raise_for_status()
 
-                image.name = "news.jpg"
+        image = BytesIO(image_response.content)
+        image.name = "news.jpg"
 
-                return image
+        return image
 
-    except Exception as error:
-        print("خطای دریافت عکس:", error)
-
-    return None
+    except Exception as e:
+        print(f"تصویر پیدا نشد: {e}")
+        return None
 
 
 def make_text(title, summary, source):
@@ -235,72 +289,163 @@ def make_text(title, summary, source):
 
 async def send_news(app, item, source):
     try:
-        link = item.get("link", "")
-        title = clean(item.get("title", ""))
-        summary = clean(item.get("summary", ""))
+        title = clean(item.get("title", "خبر جدید"))
 
-        if not link or not title:
+        link = item.get("link", "").strip()
+
+        if not link:
             return False
 
         if link in sent_links:
             return False
 
-        text = make_text(
-            title,
-            summary,
-            source
+        summary = clean(
+            item.get("summary")
+            or item.get("description")
+            or ""
         )
 
-        image = await asyncio.to_thread(
-            get_media,
-            link
-        )
+        score = importance(title, summary)
+
+        if score < 1:
+            return False
+
+        text = make_text(title, summary, source)
+
+        image = await asyncio.to_thread(get_media, link)
 
         if image:
             try:
-                image.seek(0)
-
                 await app.bot.send_photo(
                     chat_id=CHANNEL,
                     photo=image,
-                    caption=text[:1024]
+                    caption=text[:1024],
                 )
 
-                print("عکس + خبر:", title)
+            except Exception as e:
+                print(f"خطا در ارسال تصویر: {e}")
 
-                sent_links.add(link)
-
-                return True
-
-            except Exception as error:
-                print(
-                    "ارسال عکس انجام نشد:",
-                    error
+                await app.bot.send_message(
+                    chat_id=CHANNEL,
+                    text=text,
+                    disable_web_page_preview=False,
                 )
 
-        await app.bot.send_message(
-            chat_id=CHANNEL,
-            text=text
-        )
-
-        print("خبر:", title)
+        else:
+            await app.bot.send_message(
+                chat_id=CHANNEL,
+                text=text,
+                disable_web_page_preview=False,
+            )
 
         sent_links.add(link)
 
+        print(f"خبر ارسال شد: {title}")
+
         return True
 
-    except Exception as error:
-        print(
-            "خطای ارسال خبر:",
-            error
-        )
-
+    except Exception as e:
+        print(f"خطا در ارسال خبر: {e}")
         return False
 
 
 async def check_news(app):
     while True:
-        print()
-        print("================
+        print("در حال بررسی خبرهای جدید...")
 
-       
+        candidates = []
+
+        for source, rss_url in RSS_FEEDS.items():
+            feed = await asyncio.to_thread(get_feed, rss_url)
+
+            if not feed:
+                continue
+
+            entries = getattr(feed, "entries", [])
+
+            for item in entries[:5]:
+                title = clean(item.get("title", ""))
+                link = item.get("link", "").strip()
+
+                if not title or not link:
+                    continue
+
+                if link in sent_links:
+                    continue
+
+                summary = clean(
+                    item.get("summary")
+                    or item.get("description")
+                    or ""
+                )
+
+                score = importance(title, summary)
+
+                if score < 1:
+                    continue
+
+                candidates.append(
+                    {
+                        "item": item,
+                        "source": source,
+                        "score": score,
+                    }
+                )
+
+        candidates.sort(
+            key=lambda x: x["score"],
+            reverse=True,
+        )
+
+        sent_count = 0
+
+        for candidate in candidates:
+            if sent_count >= MAX_NEWS:
+                break
+
+            success = await send_news(
+                app,
+                candidate["item"],
+                candidate["source"],
+            )
+
+            if success:
+                sent_count += 1
+                await asyncio.sleep(5)
+
+        print(f"بررسی تمام شد. تعداد خبرهای ارسال‌شده: {sent_count}")
+        print(f"بررسی بعدی تا {CHECK_TIME} ثانیه دیگر.")
+
+        await asyncio.sleep(CHECK_TIME)
+
+
+async def main():
+    if not TOKEN:
+        print("خطا: توکن ربات پیدا نشد.")
+        return
+
+    print("ربات خبری در حال شروع است...")
+
+    app = Application.builder().token(TOKEN).build()
+
+    await app.initialize()
+    await app.start()
+
+    print("ربات با موفقیت روشن شد.")
+
+    asyncio.create_task(check_news(app))
+
+    try:
+        while True:
+            await asyncio.sleep(3600)
+
+    except KeyboardInterrupt:
+        print("ربات متوقف شد.")
+
+    finally:
+        await app.stop()
+        await app.shutdown()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
