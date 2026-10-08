@@ -14,7 +14,6 @@ from telegram.ext import Application, CallbackQueryHandler
 TOKEN = os.getenv("TOKEN")
 
 CHANNEL = "@SARKHATEKHABARNEWS1"
-CHANNEL_LINK = "https://t.me/SARKHATEKHABARNEWS1"
 
 MAX_NEWS = 10
 CHECK_TIME = 300
@@ -183,43 +182,46 @@ def get_media(url):
 
                 image_response.raise_for_status()
 
-                image = BytesIO(image_response.content)
+                image = BytesIO(
+                    image_response.content
+                )
+
                 image.name = "news.jpg"
 
                 return image
 
     except Exception as error:
-        print("⚠️ خطای عکس:", error)
+        print("⚠️ خطای دریافت عکس:", error)
 
     return None
 
 
-def keyboard(link):
+def keyboard():
     buttons = [
         [
             InlineKeyboardButton(
-                "🔗 ادامه خبر",
-                url=link
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                "👍 مفید",
-                callback_data="useful"
+                "😁",
+                callback_data="laugh"
             ),
             InlineKeyboardButton(
-                "❤️ جالب",
-                callback_data="interesting"
+                "😍",
+                callback_data="love"
             ),
             InlineKeyboardButton(
-                "🔥 مهم",
-                callback_data="important"
-            )
-        ],
-        [
+                "😐",
+                callback_data="neutral"
+            ),
             InlineKeyboardButton(
-                "📤 اشتراک‌گذاری",
-                url=CHANNEL_LINK
+                "❤️",
+                callback_data="heart"
+            ),
+            InlineKeyboardButton(
+                "👍",
+                callback_data="like"
+            ),
+            InlineKeyboardButton(
+                "👎",
+                callback_data="dislike"
             )
         ]
     ]
@@ -232,6 +234,7 @@ async def feedback(update, context):
         await update.callback_query.answer(
             "بازخورد شما ثبت شد ❤️"
         )
+
     except Exception as error:
         print("⚠️ خطای بازخورد:", error)
 
@@ -240,8 +243,14 @@ async def send_news(app, item, source):
 
     try:
         link = item.get("link", "")
-        title = clean(item.get("title", ""))
-        summary = clean(item.get("summary", ""))
+
+        title = clean(
+            item.get("title", "")
+        )
+
+        summary = clean(
+            item.get("summary", "")
+        )
 
         if not link or not title:
             return False
@@ -249,25 +258,22 @@ async def send_news(app, item, source):
         if link in sent_links:
             return False
 
-        if len(summary) > 300:
-            summary = summary[:300] + "..."
+        if len(summary) > 400:
+            summary = summary[:400] + "..."
 
         if not summary:
             summary = (
-                "برای مشاهده جزئیات خبر "
-                "روی «ادامه خبر» بزنید."
+                "جزئیات این خبر در متن منبع منتشر شده است."
             )
 
         text = (
             f"{category(title, source)}\n\n"
             f"📰 {title}\n\n"
             f"{summary}\n\n"
-            f"📡 منبع: {source}\n\n"
-            f"📣 سرخط خبر\n"
-            f"📢 {CHANNEL_LINK}"
+            f"/{source}"
         )
 
-        buttons = keyboard(link)
+        buttons = keyboard()
 
         image = await asyncio.to_thread(
             get_media,
@@ -275,6 +281,7 @@ async def send_news(app, item, source):
         )
 
         if image:
+
             try:
                 image.seek(0)
 
@@ -292,7 +299,10 @@ async def send_news(app, item, source):
                 return True
 
             except Exception as error:
-                print("⚠️ ارسال عکس نشد:", error)
+                print(
+                    "⚠️ ارسال عکس انجام نشد:",
+                    error
+                )
 
         await app.bot.send_message(
             chat_id=CHANNEL,
@@ -333,13 +343,17 @@ async def check_news(app):
             )
 
             if not feed:
-                print("⚠️ RSS دریافت نشد:", source)
+                print(
+                    "⚠️ RSS دریافت نشد:",
+                    source
+                )
                 continue
 
             entries = feed.entries[:10]
 
             print(
-                f"   تعداد خبرهای دریافت‌شده: {len(entries)}"
+                "   تعداد خبر:",
+                len(entries)
             )
 
             for item in entries:
@@ -368,8 +382,8 @@ async def check_news(app):
                     summary
                 )
 
-                # خبرهای دارای اهمیت را انتخاب می‌کنیم
                 if score >= 1:
+
                     candidates.append(
                         (
                             score,
@@ -385,7 +399,7 @@ async def check_news(app):
 
         print()
         print(
-            "🔥 تعداد خبرهای آماده ارسال:",
+            "🔥 خبرهای آماده ارسال:",
             len(candidates)
         )
 
@@ -403,13 +417,14 @@ async def check_news(app):
             )
 
             if success:
+
                 count += 1
 
                 await asyncio.sleep(3)
 
         print()
         print(
-            "✅ تعداد ارسال این نوبت:",
+            "✅ تعداد ارسال:",
             count
         )
 
@@ -417,13 +432,19 @@ async def check_news(app):
             "⏱️ بررسی بعدی ۵ دقیقه دیگر..."
         )
 
-        await asyncio.sleep(CHECK_TIME)
+        await asyncio.sleep(
+            CHECK_TIME
+        )
 
 
 async def main():
 
     if not TOKEN:
-        print("❌ TOKEN پیدا نشد")
+
+        print(
+            "❌ TOKEN پیدا نشد"
+        )
+
         return
 
     app = (
@@ -437,12 +458,26 @@ async def main():
         CallbackQueryHandler(feedback)
     )
 
-    print("🚀 ربات خبری روشن شد")
-    print("📢 کانال:", CHANNEL)
-    print("⏱️ بررسی هر ۵ دقیقه")
-    print("🔥 حداکثر ۱۰ خبر در هر نوبت")
+    print()
+    print(
+        "🚀 ربات خبری روشن شد"
+    )
+
+    print(
+        "📢 کانال:",
+        CHANNEL
+    )
+
+    print(
+        "⏱️ بررسی هر ۵ دقیقه"
+    )
+
+    print(
+        "🔥 حداکثر ۱۰ خبر"
+    )
 
     await app.initialize()
+
     await app.start()
 
     asyncio.create_task(
