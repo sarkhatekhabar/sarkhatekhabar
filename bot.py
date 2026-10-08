@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 from telegram import Bot
 
 TOKEN = os.getenv("TOKEN")
-CHANNEL = "@SARKHATEAKHBARNEWS"
+CHANNEL = "@KHABARNEWS6"
 
 RSS_FEEDS = {
     "ایرنا": "https://www.irna.ir/rss",
@@ -23,11 +23,13 @@ sent_news = set()
 
 def get_image(url):
     try:
-        r = requests.get(url, timeout=TIMEOUT, headers={
-            "User-Agent": "Mozilla/5.0"
-        })
-        soup = BeautifulSoup(r.text, "html.parser")
+        r = requests.get(
+            url,
+            timeout=TIMEOUT,
+            headers={"User-Agent": "Mozilla/5.0"}
+        )
 
+        soup = BeautifulSoup(r.text, "html.parser")
         image = soup.find("meta", property="og:image")
 
         if image and image.get("content"):
@@ -40,7 +42,10 @@ def get_image(url):
 
 
 def make_summary(text, max_length=500):
-    text = BeautifulSoup(text or "", "html.parser").get_text(" ", strip=True)
+    text = BeautifulSoup(
+        text or "",
+        "html.parser"
+    ).get_text(" ", strip=True)
 
     if len(text) > max_length:
         text = text[:max_length].rsplit(" ", 1)[0] + "..."
@@ -101,14 +106,16 @@ async def send_news():
         source = news["source"]
         link = news["link"]
 
-        description = make_summary(news["description"])
+        description = make_summary(
+            news["description"]
+        )
 
         text = (
             f"📰 {title}\n\n"
             f"📌 {description}\n\n"
             f"🔗 منبع: {source}\n"
             f"{link}\n\n"
-            f"@SARKHATEAKHBARNEWS"
+            f"@KHABARNEWS6"
         )
 
         image_url = get_image(link)
@@ -142,3 +149,4 @@ if __name__ == "__main__":
     else:
         print("🤖 ربات شروع به کار کرد...")
         asyncio.run(send_news())
+
