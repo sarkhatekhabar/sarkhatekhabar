@@ -11,8 +11,8 @@ from telegram.ext import Application
 
 TOKEN = os.getenv("TOKEN")
 
-CHANNEL = "@SARKHATEKHABARNEWS1"
-CHANNEL_LINK = "https://t.me/SARKHATEKHABARNEWS1"
+CHANNEL = "@SARKHATEAKHBARNEWS"
+CHANNEL_LINK = "https://t.me/SARKHATEAKHBARNEWS"
 
 MAX_NEWS = 3
 CHECK_TIME = 300
@@ -38,7 +38,11 @@ def clean(text):
     if not text:
         return ""
 
-    text = BeautifulSoup(str(text), "html.parser").get_text(" ", strip=True)
+    text = BeautifulSoup(
+        str(text),
+        "html.parser"
+    ).get_text(" ", strip=True)
+
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
@@ -234,11 +238,17 @@ def get_media(url):
 
         response.raise_for_status()
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
 
         image_url = None
 
-        og_image = soup.find("meta", property="og:image")
+        og_image = soup.find(
+            "meta",
+            property="og:image"
+        )
 
         if og_image:
             image_url = og_image.get("content")
@@ -246,7 +256,7 @@ def get_media(url):
         if not image_url:
             twitter_image = soup.find(
                 "meta",
-                attrs={"name": "twitter:image"},
+                attrs={"name": "twitter:image"}
             )
 
             if twitter_image:
@@ -289,7 +299,9 @@ def make_text(title, summary, source):
 
 async def send_news(app, item, source):
     try:
-        title = clean(item.get("title", "خبر جدید"))
+        title = clean(
+            item.get("title", "خبر جدید")
+        )
 
         link = item.get("link", "").strip()
 
@@ -305,14 +317,24 @@ async def send_news(app, item, source):
             or ""
         )
 
-        score = importance(title, summary)
+        score = importance(
+            title,
+            summary
+        )
 
         if score < 1:
             return False
 
-        text = make_text(title, summary, source)
+        text = make_text(
+            title,
+            summary,
+            source
+        )
 
-        image = await asyncio.to_thread(get_media, link)
+        image = await asyncio.to_thread(
+            get_media,
+            link
+        )
 
         if image:
             try:
@@ -323,7 +345,9 @@ async def send_news(app, item, source):
                 )
 
             except Exception as e:
-                print(f"خطا در ارسال تصویر: {e}")
+                print(
+                    f"خطا در ارسال تصویر: {e}"
+                )
 
                 await app.bot.send_message(
                     chat_id=CHANNEL,
@@ -340,32 +364,52 @@ async def send_news(app, item, source):
 
         sent_links.add(link)
 
-        print(f"خبر ارسال شد: {title}")
+        print(
+            f"خبر ارسال شد: {title}"
+        )
 
         return True
 
     except Exception as e:
-        print(f"خطا در ارسال خبر: {e}")
+        print(
+            f"خطا در ارسال خبر: {e}"
+        )
+
         return False
 
 
 async def check_news(app):
     while True:
-        print("در حال بررسی خبرهای جدید...")
+        print(
+            "در حال بررسی خبرهای جدید..."
+        )
 
         candidates = []
 
         for source, rss_url in RSS_FEEDS.items():
-            feed = await asyncio.to_thread(get_feed, rss_url)
+            feed = await asyncio.to_thread(
+                get_feed,
+                rss_url
+            )
 
             if not feed:
                 continue
 
-            entries = getattr(feed, "entries", [])
+            entries = getattr(
+                feed,
+                "entries",
+                []
+            )
 
             for item in entries[:5]:
-                title = clean(item.get("title", ""))
-                link = item.get("link", "").strip()
+                title = clean(
+                    item.get("title", "")
+                )
+
+                link = item.get(
+                    "link",
+                    ""
+                ).strip()
 
                 if not title or not link:
                     continue
@@ -379,7 +423,10 @@ async def check_news(app):
                     or ""
                 )
 
-                score = importance(title, summary)
+                score = importance(
+                    title,
+                    summary
+                )
 
                 if score < 1:
                     continue
@@ -394,7 +441,7 @@ async def check_news(app):
 
         candidates.sort(
             key=lambda x: x["score"],
-            reverse=True,
+            reverse=True
         )
 
         sent_count = 0
@@ -406,41 +453,65 @@ async def check_news(app):
             success = await send_news(
                 app,
                 candidate["item"],
-                candidate["source"],
+                candidate["source"]
             )
 
             if success:
                 sent_count += 1
                 await asyncio.sleep(5)
 
-        print(f"بررسی تمام شد. تعداد خبرهای ارسال‌شده: {sent_count}")
-        print(f"بررسی بعدی تا {CHECK_TIME} ثانیه دیگر.")
+        print(
+            f"بررسی تمام شد. "
+            f"تعداد خبرهای ارسال‌شده: {sent_count}"
+        )
 
-        await asyncio.sleep(CHECK_TIME)
+        print(
+            f"بررسی بعدی تا "
+            f"{CHECK_TIME} ثانیه دیگر."
+        )
+
+        await asyncio.sleep(
+            CHECK_TIME
+        )
 
 
 async def main():
     if not TOKEN:
-        print("خطا: توکن ربات پیدا نشد.")
+        print(
+            "خطا: توکن ربات پیدا نشد."
+        )
         return
 
-    print("ربات خبری در حال شروع است...")
+    print(
+        "ربات خبری در حال شروع است..."
+    )
 
-    app = Application.builder().token(TOKEN).build()
+    app = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .build()
+    )
 
     await app.initialize()
     await app.start()
 
-    print("ربات با موفقیت روشن شد.")
+    print(
+        "ربات با موفقیت روشن شد."
+    )
 
-    asyncio.create_task(check_news(app))
+    asyncio.create_task(
+        check_news(app)
+    )
 
     try:
         while True:
             await asyncio.sleep(3600)
 
     except KeyboardInterrupt:
-        print("ربات متوقف شد.")
+        print(
+            "ربات متوقف شد."
+        )
 
     finally:
         await app.stop()
@@ -449,3 +520,8 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
+
+
