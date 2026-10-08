@@ -1,11 +1,29 @@
 import os
+import asyncio
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from telegram import Bot
+
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    ContextTypes,
+)
+
+# =========================
+# تنظیمات
+# =========================
 
 TOKEN = os.getenv("TOKEN")
 CHANNEL = "@KHABARNEWS6"
+
+MAX_NEWS = 10
+CHECK_INTERVAL = 300  # هر 5 دقیقه
 
 RSS_FEEDS = {
     "ایرنا": "https://www.irna.ir/rss",
@@ -14,22 +32,29 @@ RSS_FEEDS = {
     "تسنیم": "https://www.tasnimnews.com/fa/rss",
 }
 
-MAX_NEWS_PER_RUN = 5
-TIMEOUT = 15
+sent_links = set()
 
 
-def get_image(url):
+# =========================
+# گرفتن تصویر خبر
+# =========================
+
+def get_news_image(url):
     try:
         response = requests.get(
             url,
-            timeout=TIMEOUT,
-            headers={"User-Agent": "Mozilla/5.0"}
+            timeout=15,
+            headers={
+                "User-Agent": "Mozilla/5.0"
+            }
         )
 
         soup = BeautifulSoup(response.text, "html.parser")
 
-        # تصویر اصلی خبر
-        image = soup.find("meta", property="og:image")
+        image = soup.find(
+            "meta",
+            property="og:image"
+        )
 
         if image and image.get("content"):
             return image["content"]
@@ -40,114 +65,287 @@ def get_image(url):
     return None
 
 
-def make_summary(text, max_length=500):
+# =========================
+# ساخت خلاصه
+# =========================
+
+def make_summary(text):
     text = BeautifulSoup(
         text or "",
         "html.parser"
     ).get_text(" ", strip=True)
 
     if not text:
-        return "برای مطالعه جزئیات کامل خبر، به منبع مراجعه کنید."
+        return "جزئیات بیشتر این خبر را در منبع اصلی بخوانید."
 
-    if len(text) > max_length:
-        text = text[:max_length].rsplit(" ", 1)[0] + "..."
+    if len(text) > 350:
+        text = text[:350].rsplit(" ", 1)[0] + "..."
 
     return text
 
 
+# =========================
+# دریافت خبرها
+# =========================
+
 def get_news():
+
     news = []
 
     for source, rss_url in RSS_FEEDS.items():
+
         try:
+
             feed = feedparser.parse(rss_url)
 
-            for item in feed.entries[:5]:
+            for item in feed.entries:
 
-                title = item.get("title", "").strip()
-                link = item.get("link", "").strip()
-                description = item.get("summary", "")
+                title = item.get(
+                    "title",
+                    ""
+                ).strip()
+
+                link = item.get(
+                    "link",
+                    ""
+                ).strip()
+
+                summary = item.get(
+                    "summary",
+                    ""
+                )
 
                 if not title or not link:
                     continue
 
+                if link in sent_links:
+                    continue
+
                 news.append({
-                    "source": source,
                     "title": title,
                     "link": link,
-                    "description": description
+                    "summary": summary,
+                    "source": source
                 })
 
+                if len(news) >= MAX_NEWS:
+                    break
+
+            if len(news) >= MAX_NEWS:
+                break
+
         except Exception as e:
-            print(f"خطا در دریافت اخبار {source}: {e}")
 
-    return news[:MAX_NEWS_PER_RUN]
+            print(
+                f"خطا در دریافت {source}:",
+                e
+            )
+
+    return news
 
 
-async def send_news():
+# =========================
+# واکنش‌ها
+# =========================
 
-    bot = Bot(token=TOKEN)
+def reaction_buttons():
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                "😁",
+                callback_data="react_1"
+            ),
+            InlineKeyboardButton(
+                "😍",
+                callback_data="react_2"
+            ),
+            InlineKeyboardButton(
+                "😐",
+                callback_data="react_3"
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                "❤️",
+                callback_data="react_4"
+            ),
+            InlineKeyboardButton(
+                "👍",
+                callback_data="react_5"
+            ),
+            InlineKeyboardButton(
+                "👎",
+                callback_data="react_6"
+            ),
+        ]
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+# =========================
+# مدیریت واکنش
+# =========================
+
+async def reaction_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    query = update.callback_query
+
+    await query.answer("ثبت شد ❤️")
+
+
+# =========================
+# ارسال خبر
+# =========================
+
+async def send_news(application):
 
     news_list = get_news()
 
-    print(f"تعداد خبرهای دریافت شده: {len(news_list)}")
+    print(
+        f"تعداد خبرهای جدید: {len(news_list)}"
+    )
 
     for news in news_list:
 
         title = news["title"]
-        source = news["source"]
         link = news["link"]
+        source = news["source"]
 
         summary = make_summary(
-            news["description"]
+            news["summary"]
         )
 
-        # قالب نهایی پیام
+        # =========================
+        # متن نهایی خبر
+        # =========================
+
         text = (
             f"📰 {title}\n\n"
             f"📌 {summary}\n\n"
-            f"🔗 منبع: {source}\n"
-            f"{link}\n\n"
+            f'📡 <a href="{link}">منبع: {source}</a>\n\n'
             f"@KHABARNEWS6"
         )
 
-        image_url = get_image(link)
+        image_url = get_news_image(link)
 
         try:
 
             if image_url:
 
-                await bot.send_photo(
+                await application.bot.send_photo(
                     chat_id=CHANNEL,
                     photo=image_url,
-                    caption=text
+                    caption=text,
+                    parse_mode="HTML",
+                    reply_markup=reaction_buttons()
                 )
 
             else:
 
-                await bot.send_message(
+                await application.bot.send_message(
                     chat_id=CHANNEL,
-                    text=text
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=reaction_buttons()
                 )
 
-            print(f"✅ خبر ارسال شد: {title}")
+            sent_links.add(link)
+
+            print(
+                "✅ خبر ارسال شد:",
+                title
+            )
+
+            # فاصله کوتاه بین خبرها
+            await asyncio.sleep(3)
 
         except Exception as e:
 
-            print(f"❌ خطا در ارسال خبر: {e}")
+            print(
+                "❌ خطا در ارسال:",
+                e
+            )
 
 
-if __name__ == "__main__":
+# =========================
+# اجرای ربات
+# =========================
 
-    import asyncio
+async def news_loop(application):
+
+    while True:
+
+        try:
+
+            await send_news(application)
+
+        except Exception as e:
+
+            print(
+                "❌ خطا در اجرای چرخه:",
+                e
+            )
+
+        print(
+            "⏳ بررسی بعدی ۵ دقیقه دیگر..."
+        )
+
+        await asyncio.sleep(
+            CHECK_INTERVAL
+        )
+
+
+async def post_init(application):
+
+    print(
+        "🤖 ربات روشن شد..."
+    )
+
+    asyncio.create_task(
+        news_loop(application)
+    )
+
+
+# =========================
+# شروع
+# =========================
+
+def main():
 
     if not TOKEN:
 
-        print("❌ توکن ربات پیدا نشد!")
+        print(
+            "❌ TOKEN پیدا نشد!"
+        )
 
-    else:
+        return
 
-        print("🤖 ربات شروع به کار کرد...")
+    application = (
+        Application.builder()
+        .token(TOKEN)
+        .post_init(post_init)
+        .build()
+    )
 
-        asyncio.run(send_news())
+    application.add_handler(
+        CallbackQueryHandler(
+            reaction_handler,
+            pattern="^react_"
+        )
+    )
+
+    print(
+        "🚀 ربات در حال اجراست..."
+    )
+
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
 
