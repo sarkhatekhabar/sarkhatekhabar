@@ -1,117 +1,344 @@
 import os
 import asyncio
+import re
+from io import BytesIO
+
 import feedparser
 import requests
 from bs4 import BeautifulSoup
 
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+from telegram.ext import Application
 
-# =========================
-# تنظیمات
-# =========================
 
 TOKEN = os.getenv("TOKEN")
+
 CHANNEL = "@KHABARNEWS6"
 
-MAX_NEWS = 10
-CHECK_INTERVAL = 300  # هر 5 دقیقه
+MAX_NEWS = 5
+CHECK_TIME = 300
+
+sent_links = set()
+
 
 RSS_FEEDS = {
     "ایرنا": "https://www.irna.ir/rss",
     "ایسنا": "https://www.isna.ir/rss",
     "مهر": "https://www.mehrnews.com/rss",
+    "خبرآنلاین": "https://www.khabaronline.ir/rss",
+    "باشگاه خبرنگاران": "https://www.yjc.ir/fa/rss/allnews",
+    "تابناک": "https://www.tabnak.ir/fa/rss/allnews",
+    "عصر ایران": "https://www.asriran.com/fa/rss/allnews",
     "تسنیم": "https://www.tasnimnews.com/fa/rss",
+    "ورزش سه": "https://www.varzesh3.com/rss/all",
+    "زومیت": "https://www.zoomit.ir/feed/"
 }
 
-sent_links = set()
+
+def clean(text):
+    if not text:
+        return ""
+
+    soup = BeautifulSoup(text, "html.parser")
+    text = soup.get_text(" ", strip=True)
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
 
 
-# =========================
-# گرفتن تصویر خبر
-# =========================
+def category(title, source):
+    text = (title + " " + source).lower()
 
-def get_news_image(url):
+    sports = [
+        "فوتبال", "استقلال", "پرسپولیس",
+        "تیم ملی", "ورزش", "جام جهانی",
+        "قهرمانی", "لیگ"
+    ]
+
+    economy = [
+        "دلار", "طلا", "سکه", "بورس",
+        "بنزین", "تورم", "اقتصاد",
+        "قیمت", "خودرو", "مسکن", "ارز"
+    ]
+
+    technology = [
+        "فناوری", "تکنولوژی", "هوش مصنوعی",
+        "موبایل", "گوشی", "اینترنت",
+        "گوگل", "اپل", "مایکروسافت"
+    ]
+
+    world = [
+        "آمریکا", "ترامپ", "اسرائیل",
+        "روسیه", "اوکراین", "چین",
+        "غزه", "فلسطین", "اروپا"
+    ]
+
+    if any(x in text for x in sports):
+        return "⚽ ورزشی"
+
+    if any(x in text for x in economy):
+        return "💰 اقتصادی"
+
+    if any(x in text for x in technology):
+        return "💻 فناوری"
+
+    if any(x in text for x in world):
+        return "🌍 بین‌الملل"
+
+    return "📰 عمومی"
+
+
+def importance(title, summary):
+    text = (title + " " + summary).lower()
+
+    score = 0
+
+    very_important = [
+        "فوری", "خبر فوری", "حمله", "جنگ",
+        "موشک", "انفجار", "زلزله",
+        "سیل", "آتش‌سوزی", "کشته",
+        "مصدوم", "ترور", "بازداشت",
+        "تحریم", "بحران", "هشدار"
+    ]
+
+    important = [
+        "ایران", "رئیس جمهور", "رئیس‌جمهور",
+        "رهبر", "دولت", "مجلس",
+        "وزیر", "انتخابات", "آمریکا",
+        "ترامپ", "اسرائیل", "روسیه",
+        "اوکراین", "غزه", "فلسطین",
+        "دلار", "طلا", "سکه", "بورس",
+        "بنزین", "تورم", "قیمت",
+        "فوتبال", "تیم ملی", "استقلال",
+        "پرسپولیس", "جام جهانی",
+        "هوش مصنوعی"
+    ]
+
+    for word in very_important:
+        if word in text:
+            score += 3
+
+    for word in important:
+        if word in text:
+            score += 1
+
+    return score
+
+
+def get_feed(url):
     try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
         response = requests.get(
             url,
-            timeout=15,
-            headers={
-                "User-Agent": "Mozilla/5.0"
-            }
+            headers=headers,
+            timeout=15
         )
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        response.raise_for_status()
 
-        image = soup.find(
+        return feedparser.parse(response.content)
+
+    except Exception as error:
+        print("❌ خطا در RSS:", error)
+        return None
+
+
+def get_media(url):
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=15
+        )
+
+        response.raise_for_status()
+
+        soup = BeautifulSoup(
+            response.text,
+            "html.parser"
+        )
+
+        tag = soup.find(
             "meta",
             property="og:image"
         )
 
-        if image and image.get("content"):
-            return image["content"]
+        if tag:
+            image_url = tag.get("content")
 
-    except Exception as e:
-        print("خطا در دریافت تصویر:", e)
+            if image_url:
+                image_response = requests.get(
+                    image_url,
+                    headers=headers,
+                    timeout=15
+                )
+
+                image_response.raise_for_status()
+
+                image = BytesIO(
+                    image_response.content
+                )
+
+                image.name = "news.jpg"
+
+                return image
+
+    except Exception as error:
+        print("⚠️ خطای عکس:", error)
 
     return None
 
 
-# =========================
-# ساخت خلاصه
-# =========================
+async def send_news(app, item, source):
 
-def make_summary(text):
-    text = BeautifulSoup(
-        text or "",
-        "html.parser"
-    ).get_text(" ", strip=True)
+    try:
+        link = item.get("link", "")
 
-    if not text:
-        return "جزئیات بیشتر این خبر را در منبع اصلی بخوانید."
+        title = clean(
+            item.get("title", "")
+        )
 
-    if len(text) > 350:
-        text = text[:350].rsplit(" ", 1)[0] + "..."
+        summary = clean(
+            item.get("summary", "")
+        )
 
-    return text
+        if not link or not title:
+            return False
+
+        if link in sent_links:
+            return False
+
+        # خلاصه کوتاه
+        if len(summary) > 300:
+            summary = summary[:300] + "..."
+
+        if not summary:
+            summary = "جزئیات خبر در منبع اصلی منتشر شده است."
+
+        text = (
+            f"{category(title, source)}\n\n"
+            f"📰 {title}\n\n"
+            f"{summary} /{source}\n\n"
+            f"📢 @KHABARNEWS6\n\n"
+            f"😁 😍 😐 ❤️ 👍 👎"
+        )
+
+        # دریافت عکس خبر
+        image = await asyncio.to_thread(
+            get_media,
+            link
+        )
+
+        # اگر عکس داشت
+        if image:
+
+            try:
+                image.seek(0)
+
+                await app.bot.send_photo(
+                    chat_id=CHANNEL,
+                    photo=image,
+                    caption=text[:1024]
+                )
+
+                print(
+                    "✅ عکس + خبر:",
+                    title
+                )
+
+                sent_links.add(link)
+
+                return True
+
+            except Exception as error:
+
+                print(
+                    "⚠️ ارسال عکس نشد:",
+                    error
+                )
+
+        # اگر عکس نداشت
+        await app.bot.send_message(
+            chat_id=CHANNEL,
+            text=text[:4096]
+        )
+
+        print(
+            "✅ خبر:",
+            title
+        )
+
+        sent_links.add(link)
+
+        return True
+
+    except Exception as error:
+
+        print(
+            "❌ خطای ارسال:",
+            error
+        )
+
+        return False
 
 
-# =========================
-# دریافت خبرها
-# =========================
+async def check_news(app):
 
-def get_news():
+    while True:
 
-    news = []
+        print()
+        print("==============================")
+        print("🔎 بررسی خبرهای جدید...")
+        print("==============================")
 
-    for source, rss_url in RSS_FEEDS.items():
+        candidates = []
 
-        try:
+        for source, rss in RSS_FEEDS.items():
 
-            feed = feedparser.parse(rss_url)
+            print(
+                "📡 بررسی:",
+                source
+            )
 
-            for item in feed.entries:
+            feed = await asyncio.to_thread(
+                get_feed,
+                rss
+            )
 
-                title = item.get(
-                    "title",
-                    ""
-                ).strip()
+            if not feed:
+
+                print(
+                    "⚠️ دریافت نشد:",
+                    source
+                )
+
+                continue
+
+            entries = feed.entries[:10]
+
+            print(
+                "تعداد خبر:",
+                len(entries)
+            )
+
+            for item in entries:
+
+                title = clean(
+                    item.get("title", "")
+                )
+
+                summary = clean(
+                    item.get("summary", "")
+                )
 
                 link = item.get(
                     "link",
-                    ""
-                ).strip()
-
-                summary = item.get(
-                    "summary",
                     ""
                 )
 
@@ -121,231 +348,110 @@ def get_news():
                 if link in sent_links:
                     continue
 
-                news.append({
-                    "title": title,
-                    "link": link,
-                    "summary": summary,
-                    "source": source
-                })
-
-                if len(news) >= MAX_NEWS:
-                    break
-
-            if len(news) >= MAX_NEWS:
-                break
-
-        except Exception as e:
-
-            print(
-                f"خطا در دریافت {source}:",
-                e
-            )
-
-    return news
-
-
-# =========================
-# واکنش‌ها
-# =========================
-
-def reaction_buttons():
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "😁",
-                callback_data="react_1"
-            ),
-            InlineKeyboardButton(
-                "😍",
-                callback_data="react_2"
-            ),
-            InlineKeyboardButton(
-                "😐",
-                callback_data="react_3"
-            ),
-        ],
-        [
-            InlineKeyboardButton(
-                "❤️",
-                callback_data="react_4"
-            ),
-            InlineKeyboardButton(
-                "👍",
-                callback_data="react_5"
-            ),
-            InlineKeyboardButton(
-                "👎",
-                callback_data="react_6"
-            ),
-        ]
-    ]
-
-    return InlineKeyboardMarkup(keyboard)
-
-
-# =========================
-# مدیریت واکنش
-# =========================
-
-async def reaction_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
-    query = update.callback_query
-
-    await query.answer("ثبت شد ❤️")
-
-
-# =========================
-# ارسال خبر
-# =========================
-
-async def send_news(application):
-
-    news_list = get_news()
-
-    print(
-        f"تعداد خبرهای جدید: {len(news_list)}"
-    )
-
-    for news in news_list:
-
-        title = news["title"]
-        link = news["link"]
-        source = news["source"]
-
-        summary = make_summary(
-            news["summary"]
-        )
-
-        # =========================
-        # متن نهایی خبر
-        # =========================
-
-        text = (
-            f"📰 {title}\n\n"
-            f"📌 {summary}\n\n"
-            f'📡 <a href="{link}">منبع: {source}</a>\n\n'
-            f"@KHABARNEWS6"
-        )
-
-        image_url = get_news_image(link)
-
-        try:
-
-            if image_url:
-
-                await application.bot.send_photo(
-                    chat_id=CHANNEL,
-                    photo=image_url,
-                    caption=text,
-                    parse_mode="HTML",
-                    reply_markup=reaction_buttons()
+                score = importance(
+                    title,
+                    summary
                 )
 
-            else:
+                if score >= 1:
 
-                await application.bot.send_message(
-                    chat_id=CHANNEL,
-                    text=text,
-                    parse_mode="HTML",
-                    reply_markup=reaction_buttons()
-                )
+                    candidates.append(
+                        (
+                            score,
+                            source,
+                            item
+                        )
+                    )
 
-            sent_links.add(link)
-
-            print(
-                "✅ خبر ارسال شد:",
-                title
-            )
-
-            # فاصله کوتاه بین خبرها
-            await asyncio.sleep(3)
-
-        except Exception as e:
-
-            print(
-                "❌ خطا در ارسال:",
-                e
-            )
-
-
-# =========================
-# اجرای ربات
-# =========================
-
-async def news_loop(application):
-
-    while True:
-
-        try:
-
-            await send_news(application)
-
-        except Exception as e:
-
-            print(
-                "❌ خطا در اجرای چرخه:",
-                e
-            )
+        # مهم‌ترین خبرها اول
+        candidates.sort(
+            key=lambda x: x[0],
+            reverse=True
+        )
 
         print(
-            "⏳ بررسی بعدی ۵ دقیقه دیگر..."
+            "🔥 خبرهای آماده:",
+            len(candidates)
+        )
+
+        count = 0
+
+        for score, source, item in candidates:
+
+            if count >= MAX_NEWS:
+                break
+
+            success = await send_news(
+                app,
+                item,
+                source
+            )
+
+            if success:
+
+                count += 1
+
+                await asyncio.sleep(3)
+
+        print(
+            "✅ ارسال این نوبت:",
+            count
+        )
+
+        print(
+            "⏱️ بررسی بعدی ۵ دقیقه دیگر..."
         )
 
         await asyncio.sleep(
-            CHECK_INTERVAL
+            CHECK_TIME
         )
 
 
-async def post_init(application):
-
-    print(
-        "🤖 ربات روشن شد..."
-    )
-
-    asyncio.create_task(
-        news_loop(application)
-    )
-
-
-# =========================
-# شروع
-# =========================
-
-def main():
+async def main():
 
     if not TOKEN:
 
         print(
-            "❌ TOKEN پیدا نشد!"
+            "❌ TOKEN پیدا نشد"
         )
 
         return
 
-    application = (
-        Application.builder()
+    app = (
+        Application
+        .builder()
         .token(TOKEN)
-        .post_init(post_init)
         .build()
     )
 
-    application.add_handler(
-        CallbackQueryHandler(
-            reaction_handler,
-            pattern="^react_"
-        )
+    print(
+        "🚀 ربات خبری روشن شد"
     )
 
     print(
-        "🚀 ربات در حال اجراست..."
+        "📢 کانال:",
+        CHANNEL
     )
 
-    application.run_polling()
+    print(
+        "⏱️ بررسی هر ۵ دقیقه"
+    )
+
+    print(
+        "📰 حداکثر ۵ خبر"
+    )
+
+    await app.initialize()
+
+    await app.start()
+
+    asyncio.create_task(
+        check_news(app)
+    )
+
+    await asyncio.Event().wait()
 
 
 if __name__ == "__main__":
-    main()
 
+    asyncio.run(main())
