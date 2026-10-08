@@ -2,15 +2,18 @@ name: Telegram News Bot
 
 on:
   workflow_dispatch:
+
   schedule:
     - cron: "0 */6 * * *"
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
     timeout-minutes: 350
 
     steps:
+
       - name: Get bot code
         uses: actions/checkout@v4
 
