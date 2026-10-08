@@ -13,7 +13,7 @@ from telegram.ext import Application, CallbackQueryHandler
 
 TOKEN = os.getenv("TOKEN")
 
-CHANNEL = "@SARKHATEKHABARNEW"
+CHANNEL = "@SARKHATEKHABARNEWS1"
 CHANNEL_LINK = "https://t.me/SARKHATEKHABARNEWS1"
 
 MAX_NEWS = 10
@@ -126,9 +126,7 @@ def importance(title, summary):
     return score
 
 
-def get_media(url):
-    image = None
-
+def get_feed(url):
     try:
         headers = {
             "User-Agent": "Mozilla/5.0"
@@ -137,8 +135,31 @@ def get_media(url):
         response = requests.get(
             url,
             headers=headers,
-            timeout=10
+            timeout=15
         )
+
+        response.raise_for_status()
+
+        return feedparser.parse(response.content)
+
+    except Exception as error:
+        print("❌ خطا در دریافت RSS:", error)
+        return None
+
+
+def get_media(url):
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+
+        response = requests.get(
+            url,
+            headers=headers,
+            timeout=15
+        )
+
+        response.raise_for_status()
 
         soup = BeautifulSoup(
             response.text,
@@ -154,20 +175,23 @@ def get_media(url):
             image_url = tag.get("content")
 
             if image_url:
-                r = requests.get(
+                image_response = requests.get(
                     image_url,
                     headers=headers,
-                    timeout=10
+                    timeout=15
                 )
 
-                if r.status_code == 200:
-                    image = BytesIO(r.content)
-                    image.name = "news.jpg"
+                image_response.raise_for_status()
+
+                image = BytesIO(image_response.content)
+                image.name = "news.jpg"
+
+                return image
 
     except Exception as error:
-        print("خطای عکس:", error)
+        print("⚠️ خطای عکس:", error)
 
-    return image
+    return None
 
 
 def keyboard(link):
@@ -209,10 +233,11 @@ async def feedback(update, context):
             "بازخورد شما ثبت شد ❤️"
         )
     except Exception as error:
-        print("خطای بازخورد:", error)
+        print("⚠️ خطای بازخورد:", error)
 
 
 async def send_news(app, item, source):
+
     try:
         link = item.get("link", "")
         title = clean(item.get("title", ""))
@@ -224,17 +249,14 @@ async def send_news(app, item, source):
         if link in sent_links:
             return False
 
-        score = importance(title, summary)
-
-        if score < 2:
-            print("کم‌اهمیت:", title)
-            return False
-
         if len(summary) > 300:
             summary = summary[:300] + "..."
 
         if not summary:
-            summary = "برای مشاهده جزئیات خبر روی «ادامه خبر» بزنید."
+            summary = (
+                "برای مشاهده جزئیات خبر "
+                "روی «ادامه خبر» بزنید."
+            )
 
         text = (
             f"{category(title, source)}\n\n"
@@ -245,8 +267,12 @@ async def send_news(app, item, source):
             f"📢 {CHANNEL_LINK}"
         )
 
-        image = get_media(link)
         buttons = keyboard(link)
+
+        image = await asyncio.to_thread(
+            get_media,
+            link
+        )
 
         if image:
             try:
@@ -266,7 +292,7 @@ async def send_news(app, item, source):
                 return True
 
             except Exception as error:
-                print("خطای ارسال عکس:", error)
+                print("⚠️ ارسال عکس نشد:", error)
 
         await app.bot.send_message(
             chat_id=CHANNEL,
@@ -281,14 +307,16 @@ async def send_news(app, item, source):
         return True
 
     except Exception as error:
-        print("خطای خبر:", error)
+        print("❌ خطای ارسال خبر:", error)
 
     return False
 
 
 async def check_news(app):
+
     while True:
 
+        print()
         print("================================")
         print("🔎 بررسی خبرهای جدید...")
         print("================================")
@@ -297,59 +325,67 @@ async def check_news(app):
 
         for source, rss in RSS_FEEDS.items():
 
-            try:
-                feed = feedparser.parse(rss)
+            print("📡 بررسی:", source)
 
-                for item in feed.entries[:10]:
+            feed = await asyncio.to_thread(
+                get_feed,
+                rss
+            )
 
-                    title = clean(
-                        item.get("title", "")
-                    )
+            if not feed:
+                print("⚠️ RSS دریافت نشد:", source)
+                continue
 
-                    summary = clean(
-                        item.get("summary", "")
-                    )
+            entries = feed.entries[:10]
 
-                    link = item.get(
-                        "link",
-                        ""
-                    )
+            print(
+                f"   تعداد خبرهای دریافت‌شده: {len(entries)}"
+            )
 
-                    if not title or not link:
-                        continue
+            for item in entries:
 
-                    if link in sent_links:
-                        continue
-
-                    score = importance(
-                        title,
-                        summary
-                    )
-
-                    if score >= 2:
-                        candidates.append(
-                            (
-                                score,
-                                source,
-                                item
-                            )
-                        )
-
-            except Exception as error:
-                print(
-                    "خطا در",
-                    source,
-                    ":",
-                    error
+                title = clean(
+                    item.get("title", "")
                 )
+
+                summary = clean(
+                    item.get("summary", "")
+                )
+
+                link = item.get(
+                    "link",
+                    ""
+                )
+
+                if not title or not link:
+                    continue
+
+                if link in sent_links:
+                    continue
+
+                score = importance(
+                    title,
+                    summary
+                )
+
+                # خبرهای دارای اهمیت را انتخاب می‌کنیم
+                if score >= 1:
+                    candidates.append(
+                        (
+                            score,
+                            source,
+                            item
+                        )
+                    )
 
         candidates.sort(
             key=lambda x: x[0],
             reverse=True
         )
 
+        print()
         print(
-            "🔥 خبرهای مهم:",
+            "🔥 تعداد خبرهای آماده ارسال:",
             len(candidates)
         )
 
@@ -368,15 +404,17 @@ async def check_news(app):
 
             if success:
                 count += 1
+
                 await asyncio.sleep(3)
 
+        print()
         print(
-            "✅ ارسال این نوبت:",
+            "✅ تعداد ارسال این نوبت:",
             count
         )
 
         print(
-            "⏱️ بررسی بعدی ۵ دقیقه دیگر"
+            "⏱️ بررسی بعدی ۵ دقیقه دیگر..."
         )
 
         await asyncio.sleep(CHECK_TIME)
@@ -400,8 +438,9 @@ async def main():
     )
 
     print("🚀 ربات خبری روشن شد")
+    print("📢 کانال:", CHANNEL)
     print("⏱️ بررسی هر ۵ دقیقه")
-    print("🔥 حداکثر ۱۰ خبر مهم")
+    print("🔥 حداکثر ۱۰ خبر در هر نوبت")
 
     await app.initialize()
     await app.start()
@@ -415,4 +454,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
