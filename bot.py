@@ -1,12 +1,11 @@
 import os
 import re
 import json
-import time
 import asyncio
 import hashlib
 from io import BytesIO
-from difflib import SequenceMatcher
 from pathlib import Path
+from difflib import SequenceMatcher
 
 import feedparser
 import requests
@@ -14,12 +13,7 @@ from bs4 import BeautifulSoup
 from telegram.ext import Application
 
 
-# =========================
-# تنظیمات اصلی
-# =========================
-
 TOKEN = os.getenv("TOKEN")
-
 CHANNEL = "@KHABARNEWS6"
 
 MAX_NEWS = 3
@@ -49,275 +43,229 @@ sent_links = set()
 sent_titles = []
 
 
-# =========================
-# پاک‌سازی متن
-# =========================
-
 def clean(text):
+    """پاک‌سازی متن خبر"""
     if not text:
         return ""
 
-    soup = BeautifulSoup(str(text), "html.parser")
-    text = soup.get_text(" ", strip=True)
-
+    text = BeautifulSoup(str(text), "html.parser").get_text(" ")
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[\r\n\t]+", " ", text)
 
     return text.strip()
 
 
 def normalize(text):
+    """یکسان‌سازی متن برای تشخیص خبرهای تکراری"""
     text = clean(text).lower()
-
-    replacements = {
-        "ي": "ی",
-        "ك": "ک",
-        "أ": "ا",
-        "إ": "ا",
-        "ۀ": "ه",
-    }
-
-    for old, new in replacements.items():
-        text = text.replace(old, new)
-
+    text = text.replace("ي", "ی").replace("ك", "ک")
     text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
 
 
-# =========================
-# دسته‌بندی خبر
-# =========================
-
 def category(title, source):
-    text = normalize(title + " " + source)
+    """تشخیص تقریبی دسته خبر"""
+    text = normalize(title)
 
-    sports = [
-        "فوتبال", "استقلال", "پرسپولیس",
-        "تیم ملی", "ورزش", "جام جهانی",
-        "قهرمانی", "لیگ", "والیبال",
-        "بسکتبال", "المپیک"
-    ]
-
-    economy = [
-        "دلار", "طلا", "سکه", "بورس",
-        "بنزین", "تورم", "اقتصاد",
-        "قیمت", "خودرو", "مسکن", "ارز",
-        "حقوق", "بازار"
-    ]
-
-    technology = [
-        "فناوری", "تکنولوژی", "هوش مصنوعی",
-        "موبایل", "گوشی", "اینترنت",
-        "گوگل", "اپل", "مایکروسافت",
-        "سامسونگ", "ربات", "نرم افزار"
-    ]
-
-    world = [
-        "آمریکا", "ترامپ", "اسرائیل",
-        "روسیه", "اوکراین", "چین",
-        "غزه", "فلسطین", "اروپا",
-        "سازمان ملل", "خاورمیانه"
-    ]
-
-    if any(word in text for word in sports):
+    if any(word in text for word in [
+        "فوتبال", "ورزش", "تیم ملی", "لیگ برتر",
+        "پرسپولیس", "استقلال", "والیبال", "بسکتبال"
+    ]):
         return "ورزشی"
 
-    if any(word in text for word in economy):
+    if any(word in text for word in [
+        "دلار", "طلا", "بورس", "اقتصاد", "تورم",
+        "قیمت", "بازار", "خودرو", "بانک", "حقوق"
+    ]):
         return "اقتصادی"
 
-    if any(word in text for word in technology):
+    if any(word in text for word in [
+        "فناوری", "هوش مصنوعی", "موبایل", "اینترنت",
+        "گوگل", "اپل", "سامسونگ", "کامپیوتر"
+    ]):
         return "فناوری"
-
-    if any(word in text for word in world):
-        return "بین‌الملل"
 
     return "عمومی"
 
 
-# =========================
-# امتیاز اهمیت خبر
-# =========================
-
-def importance(title, summary):
+def importance(title, summary, source):
+    """امتیازدهی ساده برای اولویت‌بندی خبرها"""
     text = normalize(title + " " + summary)
-
     score = 0
 
-    very_important = [
-        "خبر فوری", "حمله", "جنگ", "موشک",
-        "انفجار", "زلزله", "سیل",
-        "آتش سوزی", "کشته", "مصدوم",
-        "ترور", "بحران", "هشدار",
-        "تعطیلی مدارس", "تعطیلی ادارات"
+    important_words = [
+        "فوری", "مهم", "اعلام شد", "تصویب شد",
+        "رئیس جمهور", "دولت", "وزیر", "مجلس",
+        "زلزله", "سیل", "هشدار", "تعطیلی",
+        "قیمت بنزین", "یارانه", "کالابرگ",
+        "نرخ ارز", "دلار", "سکه", "طلا",
+        "تیم ملی", "انتخابات", "آموزش و پرورش"
     ]
 
-    important = [
-        "ایران", "رئیس جمهور", "رئیس جمهور",
-        "رهبر", "دولت", "مجلس", "وزیر",
-        "انتخابات", "آمریکا", "ترامپ",
-        "اسرائیل", "روسیه", "اوکراین",
-        "غزه", "فلسطین", "دلار", "طلا",
-        "سکه", "بورس", "بنزین", "تورم",
-        "قیمت", "فوتبال", "تیم ملی",
-        "استقلال", "پرسپولیس", "جام جهانی",
-        "هوش مصنوعی", "اینترنت"
-    ]
-
-    for word in very_important:
-        if word in text:
-            score += 4
-
-    for word in important:
-        if word in text:
-            score += 1
-
-    # عنوان خبر نسبت به توضیحات اهمیت بیشتری دارد.
-    title_normalized = normalize(title)
-
-    for word in very_important:
-        if word in title_normalized:
+    for word in important_words:
+        if normalize(word) in text:
             score += 2
+
+    # منابع شناخته‌شده امتیاز پایه می‌گیرند
+    trusted_sources = [
+        "ایرنا", "ایسنا", "مهر", "تسنیم"
+    ]
+
+    if source in trusted_sources:
+        score += 1
+
+    if len(clean(title)) < 15:
+        score -= 1
 
     return score
 
 
-# =========================
-# تاریخچه خبرهای ارسال‌شده
-# =========================
-
 def load_history():
+    """بارگذاری سابقه خبرهای ارسال‌شده"""
     global sent_links, sent_titles
 
     if not HISTORY_FILE.exists():
         return
 
     try:
-        with HISTORY_FILE.open("r", encoding="utf-8") as file:
-            data = json.load(file)
+        data = json.loads(
+            HISTORY_FILE.read_text(encoding="utf-8")
+        )
 
         sent_links = set(data.get("links", []))
         sent_titles = data.get("titles", [])
 
-        print("تعداد لینک‌های ذخیره‌شده:", len(sent_links))
-
-    except Exception as error:
-        print("خطا در خواندن تاریخچه:", error)
+    except (OSError, ValueError, TypeError):
+        sent_links = set()
+        sent_titles = []
 
 
 def save_history():
+    """ذخیره سابقه خبرها"""
     global sent_links, sent_titles
 
+    sent_links = set(list(sent_links)[-MAX_HISTORY:])
     sent_titles = sent_titles[-MAX_HISTORY:]
 
     data = {
-        "links": list(sent_links)[-MAX_HISTORY:],
-        "titles": sent_titles
+        "links": list(sent_links),
+        "titles": sent_titles,
     }
 
-    temp_file = HISTORY_FILE.with_suffix(".tmp")
-
     try:
-        with temp_file.open("w", encoding="utf-8") as file:
-            json.dump(data, file, ensure_ascii=False)
+        HISTORY_FILE.write_text(
+            json.dumps(data, ensure_ascii=False),
+            encoding="utf-8"
+        )
+    except OSError as error:
+        print(f"خطا در ذخیره سابقه: {error}")
 
-        temp_file.replace(HISTORY_FILE)
-
-    except Exception as error:
-        print("خطا در ذخیره تاریخچه:", error)
-
-
-# =========================
-# شناسایی خبرهای مشابه
-# =========================
 
 def is_duplicate(link, title):
-    if link in sent_links:
+    """بررسی تکراری نبودن خبر"""
+    if link and link in sent_links:
         return True
 
     new_title = normalize(title)
 
     if not new_title:
-        return False
+        return True
 
     for old_title in sent_titles[-300:]:
-        old_normalized = normalize(old_title)
-
-        if not old_normalized:
-            continue
-
-        similarity = SequenceMatcher(
+        ratio = SequenceMatcher(
             None,
             new_title,
-            old_normalized
+            normalize(old_title)
         ).ratio()
 
-        if similarity >= 0.84:
+        if ratio >= 0.82:
             return True
 
     return False
 
 
-# =========================
-# دریافت RSS
-# =========================
-
-def get_feed(url):
+def get_feed(source, url):
+    """دریافت خبرهای یک منبع"""
     try:
         response = requests.get(
             url,
             headers=HEADERS,
-            timeout=15
+            timeout=20
         )
-
         response.raise_for_status()
 
         feed = feedparser.parse(response.content)
 
-        return feed
+        results = []
+
+        for entry in feed.entries[:30]:
+            title = clean(entry.get("title", ""))
+            link = entry.get("link", "").strip()
+
+            summary = clean(
+                entry.get("summary", "")
+                or entry.get("description", "")
+            )
+
+            if not title or not link:
+                continue
+
+            # حذف متن اضافی و کوتاه‌کردن خلاصه
+            summary = re.sub(
+                r"(ادامه مطلب|بیشتر بخوانید).*",
+                "",
+                summary
+            ).strip()
+
+            results.append({
+                "title": title,
+                "summary": summary,
+                "link": link,
+                "source": source,
+                "score": importance(title, summary, source),
+            })
+
+        return results
 
     except Exception as error:
-        print("خطا در دریافت RSS:", error)
-        return None
+        print(f"خطا در دریافت {source}: {error}")
+        return []
 
-
-# =========================
-# دریافت تصویر خبر
-# =========================
 
 def get_media(url):
+    """پیداکردن تصویر اصلی خبر در صورت وجود"""
     try:
         response = requests.get(
             url,
             headers=HEADERS,
             timeout=15
         )
-
         response.raise_for_status()
 
-        soup = BeautifulSoup(
-            response.text,
-            "html.parser"
-        )
+        soup = BeautifulSoup(response.text, "html.parser")
 
-        tag = soup.find(
-            "meta",
-            property="og:image"
-        )
+        image_url = None
 
-        if not tag:
-            tag = soup.find(
-                "meta",
-                attrs={"name": "twitter:image"}
-            )
+        for attribute in [
+            {"property": "og:image"},
+            {"name": "twitter:image"},
+        ]:
+            tag = soup.find("meta", attrs=attribute)
 
-        if not tag:
-            return None
-
-        image_url = tag.get("content", "").strip()
+            if tag and tag.get("content"):
+                image_url = tag["content"].strip()
+                break
 
         if not image_url:
+            return None
+
+        if image_url.startswith("//"):
+            image_url = "https:" + image_url
+
+        if not image_url.startswith("https://") and not image_url.startswith("http://"):
             return None
 
         image_response = requests.get(
@@ -325,278 +273,178 @@ def get_media(url):
             headers=HEADERS,
             timeout=15
         )
-
         image_response.raise_for_status()
 
         content_type = image_response.headers.get(
             "Content-Type", ""
-        )
+        ).lower()
 
         if not content_type.startswith("image/"):
             return None
 
-        if len(image_response.content) > 9 * 1024 * 1024:
+        if len(image_response.content) > 8 * 1024 * 1024:
             return None
 
         image = BytesIO(image_response.content)
         image.name = "news.jpg"
+        image.seek(0)
 
         return image
 
     except Exception as error:
-        print("دریافت تصویر ناموفق بود:", error)
+        print(f"تصویر دریافت نشد: {error}")
         return None
 
 
-# =========================
-# آماده‌سازی خلاصه خبر
-# =========================
-
-def prepare_summary(summary):
+def prepare_summary(summary, title):
+    """آماده‌سازی خلاصه کوتاه و خوانا"""
     summary = clean(summary)
+    title = clean(title)
 
-    if not summary:
+    if not summary or normalize(summary) == normalize(title):
         return ""
 
-    # حذف بخش‌های رایج تبلیغاتی و اضافی
-    summary = re.sub(
-        r"(برای مطالعه ادامه خبر کلیک کنید|ادامه مطلب)",
-        "",
-        summary
-    )
+    # حذف جمله‌های خیلی طولانی
+    sentences = re.split(r"(?<=[.!؟])\s+", summary)
+    summary = " ".join(sentences[:3]).strip()
 
-    summary = re.sub(r"\s+", " ", summary).strip()
-
-    # خلاصه کوتاه و خوانا
-    if len(summary) > 350:
-        summary = summary[:350].rsplit(" ", 1)[0] + "..."
+    if len(summary) > 450:
+        summary = summary[:447].rsplit(" ", 1)[0] + "..."
 
     return summary
 
 
 def make_message(title, summary, source):
-    news_category = category(title, source)
+    """ساخت متن نهایی پیام"""
+    title = clean(title)
+    summary = prepare_summary(summary, title)
 
-    parts = [
-        f"📰 {title}"
-    ]
+    parts = [f"📰 {title}"]
 
     if summary:
         parts.append(summary)
 
-    body = "\n\n".join(parts)
+    # لینک منبع در متن پیام درج نمی‌شود.
+    # شناسه کانال در انتهای پیام قرار می‌گیرد.
+    parts.append("@KHABARNEWS6")
 
-    # منبع در انتهای متن خبری
-    body += f"\n\n/{source}"
+    message = "\n\n".join(parts)
 
-    # شناسه کانال در انتهای پیام
-    body += "\n\n@KHABARNEWS6"
-
-    return body
+    return message[:4000]
 
 
-# =========================
-# انتشار خبر
-# =========================
+async def send_news(app, news):
+    """ارسال خبر به کانال"""
+    title = news["title"]
+    summary = news["summary"]
+    link = news["link"]
+    source = news["source"]
 
-async def send_news(app, item, source):
+    message = make_message(title, summary, source)
+
+    media = await asyncio.to_thread(get_media, link)
+
     try:
-        link = item.get("link", "").strip()
+        if media:
+            await app.bot.send_photo(
+                chat_id=CHANNEL,
+                photo=media,
+                caption=message[:1024]
+            )
 
-        title = clean(item.get("title", ""))
-        raw_summary = item.get("summary", "")
-
-        summary = prepare_summary(raw_summary)
-
-        if not link or not title:
-            return False
-
-        if is_duplicate(link, title):
-            print("خبر تکراری کنار گذاشته شد:", title)
-            return False
-
-        message = make_message(
-            title,
-            summary,
-            source
-        )
-
-        image = await asyncio.to_thread(
-            get_media,
-            link
-        )
-
-        sent = False
-
-        if image:
-            try:
-                image.seek(0)
-
-                await app.bot.send_photo(
+            # اگر کپشن طولانی‌تر از محدودیت تلگرام باشد،
+            # ادامه متن جداگانه فرستاده می‌شود.
+            if len(message) > 1024:
+                await app.bot.send_message(
                     chat_id=CHANNEL,
-                    photo=image,
-                    caption=message[:1024]
+                    text=message[1024:].strip()
                 )
-
-                sent = True
-
-            except Exception as error:
-                print("ارسال تصویر ناموفق بود:", error)
-
-        if not sent:
+        else:
             await app.bot.send_message(
                 chat_id=CHANNEL,
-                text=message[:4096]
+                text=message
             )
 
         sent_links.add(link)
         sent_titles.append(title)
-
         save_history()
 
-        print("خبر منتشر شد:", title)
-
-        return True
+        print(f"خبر ارسال شد: {title}")
 
     except Exception as error:
-        print("خطا در ارسال خبر:", error)
-        return False
+        print(f"خطا در ارسال خبر: {error}")
 
-
-# =========================
-# بررسی و انتخاب خبرها
-# =========================
 
 async def check_news(app):
-    while True:
-        try:
-            print("\n==============================")
-            print("بررسی خبرهای جدید...")
-            print("==============================")
+    """جمع‌آوری، اولویت‌بندی و ارسال خبرها"""
+    all_news = []
 
-            candidates = []
+    for source, url in RSS_FEEDS.items():
+        items = await asyncio.to_thread(
+            get_feed,
+            source,
+            url
+        )
+        all_news.extend(items)
 
-            for source, rss in RSS_FEEDS.items():
-                print("بررسی منبع:", source)
+    # خبرهای جدید و غیرتکراری
+    candidates = []
 
-                feed = await asyncio.to_thread(
-                    get_feed,
-                    rss
-                )
+    for news in all_news:
+        if is_duplicate(news["link"], news["title"]):
+            continue
 
-                if not feed:
-                    continue
+        candidates.append(news)
 
-                for item in feed.entries[:10]:
-                    title = clean(item.get("title", ""))
-                    summary = clean(item.get("summary", ""))
-                    link = item.get("link", "").strip()
+    # اولویت با خبرهای مهم‌تر است
+    candidates.sort(
+        key=lambda item: item["score"],
+        reverse=True
+    )
 
-                    if not title or not link:
-                        continue
+    sent_count = 0
 
-                    if is_duplicate(link, title):
-                        continue
+    for news in candidates:
+        if sent_count >= MAX_NEWS:
+            break
 
-                    score = importance(title, summary)
+        # از خبرهای کم‌اهمیت صرف‌نظر می‌کنیم
+        if news["score"] < 1:
+            continue
 
-                    if score >= 1:
-                        candidates.append(
-                            (score, source, item)
-                        )
+        await send_news(app, news)
+        sent_count += 1
 
-            # اولویت با خبرهای مهم‌تر
-            candidates.sort(
-                key=lambda entry: entry[0],
-                reverse=True
-            )
+        await asyncio.sleep(2)
 
-            print("تعداد خبرهای منتخب:", len(candidates))
+    print(f"این نوبت {sent_count} خبر ارسال شد.")
 
-            count = 0
-            considered_titles = []
-
-            for score, source, item in candidates:
-                if count >= MAX_NEWS:
-                    break
-
-                title = clean(item.get("title", ""))
-                link = item.get("link", "").strip()
-
-                if not link or is_duplicate(link, title):
-                    continue
-
-                # حذف موارد مشابه در همین نوبت
-                duplicate_in_batch = False
-
-                for old_title in considered_titles:
-                    similarity = SequenceMatcher(
-                        None,
-                        normalize(title),
-                        normalize(old_title)
-                    ).ratio()
-
-                    if similarity >= 0.84:
-                        duplicate_in_batch = True
-                        break
-
-                if duplicate_in_batch:
-                    continue
-
-                considered_titles.append(title)
-
-                success = await send_news(
-                    app,
-                    item,
-                    source
-                )
-
-                if success:
-                    count += 1
-                    await asyncio.sleep(3)
-
-            print("تعداد اخبار منتشرشده:", count)
-            print("بررسی بعدی ۵ دقیقه دیگر انجام می‌شود.")
-
-        except Exception as error:
-            print("خطا در چرخه بررسی خبرها:", error)
-
-        await asyncio.sleep(CHECK_TIME)
-
-
-# =========================
-# اجرای ربات
-# =========================
 
 async def main():
     if not TOKEN:
-        print("خطا: متغیر TOKEN تنظیم نشده است.")
-        return
+        raise RuntimeError(
+            "توکن ربات تنظیم نشده است. مقدار TOKEN را در GitHub Secrets بررسی کن."
+        )
 
     load_history()
 
-    app = (
-        Application
-        .builder()
-        .token(TOKEN)
-        .build()
-    )
+    app = Application.builder().token(TOKEN).build()
 
-    print("ربات خبر نیوز آماده اجراست.")
-    print("کانال:", CHANNEL)
-    print("حداکثر خبر در هر نوبت:", MAX_NEWS)
-    print("فاصله بررسی:", CHECK_TIME, "ثانیه")
+    async with app:
+        await app.initialize()
+        await app.start()
 
-    await app.initialize()
-    await app.start()
+        try:
+            while True:
+                await check_news(app)
+                await asyncio.sleep(CHECK_TIME)
 
-    try:
-        await check_news(app)
-
-    finally:
-        await app.stop()
-        await app.shutdown()
+        finally:
+            await app.stop()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+
