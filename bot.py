@@ -1,17 +1,17 @@
 import os
 import re
 import json
+import time
 import asyncio
-import logging
+import hashlib
 from io import BytesIO
+from difflib import SequenceMatcher
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 import feedparser
 import requests
 from bs4 import BeautifulSoup
-from telegram import Bot
-from telegram.error import TelegramError
+from telegram.ext import Application
 
 
 # =========================
@@ -19,11 +19,12 @@ from telegram.error import TelegramError
 # =========================
 
 TOKEN = os.getenv("TOKEN")
+
 CHANNEL = "@KHABARNEWS6"
 
-MAX_NEWS = 2
+MAX_NEWS = 3
 CHECK_TIME = 300
-MAX_HISTORY = 3000
+MAX_HISTORY = 1000
 
 HISTORY_FILE = Path("sent_news.json")
 
@@ -44,78 +45,8 @@ RSS_FEEDS = {
     "زومیت": "https://www.zoomit.ir/feed/",
 }
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
-
-
-# =========================
-# سابقه خبرها
-# =========================
-
-def load_history():
-    try:
-        if HISTORY_FILE.exists():
-            data = json.loads(
-                HISTORY_FILE.read_text(encoding="utf-8")
-            )
-
-            if isinstance(data, list):
-                return set(data)
-
-    except Exception as error:
-        logging.warning("خطا در خواندن سابقه: %s", error)
-
-    return set()
-
-
-sent_links = load_history()
-
-
-def save_history():
-    try:
-        recent = list(sent_links)[-MAX_HISTORY:]
-
-        HISTORY_FILE.write_text(
-            json.dumps(
-                recent,
-                ensure_ascii=False,
-                indent=2
-            ),
-            encoding="utf-8"
-        )
-
-    except Exception as error:
-        logging.error("ذخیره سابقه ناموفق بود: %s", error)
-
-
-def normalize_link(link):
-    if not link:
-        return ""
-
-    try:
-        parsed = urlparse(link.strip())
-
-        # حذف پارامترهای رهگیری برای شناسایی بهتر لینک
-        query = [
-            (key, value)
-            for key, value in parse_qsl(parsed.query)
-            if not key.lower().startswith("utm_")
-            and key.lower() not in ("fbclid", "gclid")
-        ]
-
-        return urlunparse((
-            parsed.scheme.lower(),
-            parsed.netloc.lower(),
-            parsed.path.rstrip("/"),
-            "",
-            urlencode(query),
-            ""
-        ))
-
-    except Exception:
-        return link.strip()
+sent_links = set()
+sent_titles = []
 
 
 # =========================
@@ -128,37 +59,59 @@ def clean(text):
 
     soup = BeautifulSoup(str(text), "html.parser")
     text = soup.get_text(" ", strip=True)
+
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"\s+", " ", text)
+
+    return text.strip()
+
+
+def normalize(text):
+    text = clean(text).lower()
+
+    replacements = {
+        "ي": "ی",
+        "ك": "ک",
+        "أ": "ا",
+        "إ": "ا",
+        "ۀ": "ه",
+    }
+
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    text = re.sub(r"[^\w\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
 
     return text.strip()
 
 
 # =========================
-# دسته‌بندی خبرها
+# دسته‌بندی خبر
 # =========================
 
 def category(title, source):
-    text = (title + " " + source).lower()
+    text = normalize(title + " " + source)
 
     sports = [
         "فوتبال", "استقلال", "پرسپولیس",
         "تیم ملی", "ورزش", "جام جهانی",
         "قهرمانی", "لیگ", "والیبال",
-        "بسکتبال", "المپیک", "کشتی"
+        "بسکتبال", "المپیک"
     ]
 
     economy = [
         "دلار", "طلا", "سکه", "بورس",
-        "بنزین", "تورم", "اقتصاد", "قیمت",
-        "خودرو", "مسکن", "ارز", "بانک",
-        "حقوق", "یارانه", "بازار", "معیشت"
+        "بنزین", "تورم", "اقتصاد",
+        "قیمت", "خودرو", "مسکن", "ارز",
+        "حقوق", "بازار"
     ]
 
     technology = [
         "فناوری", "تکنولوژی", "هوش مصنوعی",
         "موبایل", "گوشی", "اینترنت",
         "گوگل", "اپل", "مایکروسافت",
-        "ربات", "سایبری", "نرم‌افزار"
+        "سامسونگ", "ربات", "نرم افزار"
     ]
 
     world = [
@@ -168,29 +121,19 @@ def category(title, source):
         "سازمان ملل", "خاورمیانه"
     ]
 
-    politics = [
-        "رئیس جمهور", "رئیس‌جمهور",
-        "دولت", "مجلس", "وزیر",
-        "انتخابات", "نماینده",
-        "سیاست", "مصوبه", "قانون"
-    ]
+    if any(word in text for word in sports):
+        return "ورزشی"
 
-    if any(x in text for x in sports):
-        return "⚽ ورزشی"
+    if any(word in text for word in economy):
+        return "اقتصادی"
 
-    if any(x in text for x in economy):
-        return "💰 اقتصادی"
+    if any(word in text for word in technology):
+        return "فناوری"
 
-    if any(x in text for x in technology):
-        return "💻 فناوری"
+    if any(word in text for word in world):
+        return "بین‌الملل"
 
-    if any(x in text for x in world):
-        return "🌍 بین‌الملل"
-
-    if any(x in text for x in politics):
-        return "🏛 سیاسی"
-
-    return "📰 عمومی"
+    return "عمومی"
 
 
 # =========================
@@ -198,20 +141,20 @@ def category(title, source):
 # =========================
 
 def importance(title, summary):
-    text = (title + " " + summary).lower()
+    text = normalize(title + " " + summary)
 
     score = 0
 
     very_important = [
-        "خبر فوری", "فوری", "حمله", "جنگ",
-        "موشک", "انفجار", "زلزله", "سیل",
-        "آتش‌سوزی", "کشته", "مصدوم",
+        "خبر فوری", "حمله", "جنگ", "موشک",
+        "انفجار", "زلزله", "سیل",
+        "آتش سوزی", "کشته", "مصدوم",
         "ترور", "بحران", "هشدار",
         "تعطیلی مدارس", "تعطیلی ادارات"
     ]
 
     important = [
-        "ایران", "رئیس جمهور", "رئیس‌جمهور",
+        "ایران", "رئیس جمهور", "رئیس جمهور",
         "رهبر", "دولت", "مجلس", "وزیر",
         "انتخابات", "آمریکا", "ترامپ",
         "اسرائیل", "روسیه", "اوکراین",
@@ -219,26 +162,105 @@ def importance(title, summary):
         "سکه", "بورس", "بنزین", "تورم",
         "قیمت", "فوتبال", "تیم ملی",
         "استقلال", "پرسپولیس", "جام جهانی",
-        "هوش مصنوعی", "یارانه", "حقوق"
+        "هوش مصنوعی", "اینترنت"
     ]
 
     for word in very_important:
         if word in text:
-            score += 3
+            score += 4
 
     for word in important:
         if word in text:
             score += 1
 
-    # خبرهای خیلی کوتاه یا فاقد اطلاعات کافی
-    if len(title.strip()) < 12:
-        score -= 1
+    # عنوان خبر نسبت به توضیحات اهمیت بیشتری دارد.
+    title_normalized = normalize(title)
+
+    for word in very_important:
+        if word in title_normalized:
+            score += 2
 
     return score
 
 
 # =========================
-# دریافت فید خبری
+# تاریخچه خبرهای ارسال‌شده
+# =========================
+
+def load_history():
+    global sent_links, sent_titles
+
+    if not HISTORY_FILE.exists():
+        return
+
+    try:
+        with HISTORY_FILE.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+
+        sent_links = set(data.get("links", []))
+        sent_titles = data.get("titles", [])
+
+        print("تعداد لینک‌های ذخیره‌شده:", len(sent_links))
+
+    except Exception as error:
+        print("خطا در خواندن تاریخچه:", error)
+
+
+def save_history():
+    global sent_links, sent_titles
+
+    sent_titles = sent_titles[-MAX_HISTORY:]
+
+    data = {
+        "links": list(sent_links)[-MAX_HISTORY:],
+        "titles": sent_titles
+    }
+
+    temp_file = HISTORY_FILE.with_suffix(".tmp")
+
+    try:
+        with temp_file.open("w", encoding="utf-8") as file:
+            json.dump(data, file, ensure_ascii=False)
+
+        temp_file.replace(HISTORY_FILE)
+
+    except Exception as error:
+        print("خطا در ذخیره تاریخچه:", error)
+
+
+# =========================
+# شناسایی خبرهای مشابه
+# =========================
+
+def is_duplicate(link, title):
+    if link in sent_links:
+        return True
+
+    new_title = normalize(title)
+
+    if not new_title:
+        return False
+
+    for old_title in sent_titles[-300:]:
+        old_normalized = normalize(old_title)
+
+        if not old_normalized:
+            continue
+
+        similarity = SequenceMatcher(
+            None,
+            new_title,
+            old_normalized
+        ).ratio()
+
+        if similarity >= 0.84:
+            return True
+
+    return False
+
+
+# =========================
+# دریافت RSS
 # =========================
 
 def get_feed(url):
@@ -246,7 +268,7 @@ def get_feed(url):
         response = requests.get(
             url,
             headers=HEADERS,
-            timeout=20
+            timeout=15
         )
 
         response.raise_for_status()
@@ -256,72 +278,20 @@ def get_feed(url):
         return feed
 
     except Exception as error:
-        logging.warning("خطا در دریافت RSS: %s", error)
+        print("خطا در دریافت RSS:", error)
         return None
 
 
 # =========================
-# دریافت عکس واقعی خبر
+# دریافت تصویر خبر
 # =========================
 
-def get_media(url, item=None):
+def get_media(url):
     try:
-        # اول بررسی عکس موجود در RSS
-        if item:
-            media_content = item.get("media_content", [])
-
-            for media in media_content:
-                image_url = media.get("url", "")
-
-                if image_url.startswith("https://") or image_url.startswith("http://"):
-                    image = download_image(image_url)
-
-                    if image:
-                        return image
-
-            for key in ("media_thumbnail", "links"):
-                media_list = item.get(key, [])
-
-                for media in media_list:
-                    image_url = media.get("url", "")
-
-                    media_type = media.get("type", "")
-
-                    if (
-                        image_url
-                        and (
-                            media_type.startswith("image/")
-                            or key == "media_thumbnail"
-                        )
-                    ):
-                        image = download_image(image_url)
-
-                        if image:
-                            return image
-
-            # تصویر درج‌شده در توضیحات RSS
-            content = item.get("summary", "")
-
-            soup = BeautifulSoup(
-                content,
-                "html.parser"
-            )
-
-            image_tag = soup.find("img")
-
-            if image_tag and image_tag.get("src"):
-                image = download_image(
-                    image_tag["src"]
-                )
-
-                if image:
-                    return image
-
-        # در صورت نبود عکس در RSS، صفحه خبر بررسی شود
         response = requests.get(
             url,
             headers=HEADERS,
-            timeout=20
+            timeout=15
         )
 
         response.raise_for_status()
@@ -331,265 +301,265 @@ def get_media(url, item=None):
             "html.parser"
         )
 
-        image_url = ""
-
-        for selector in (
-            {"property": "og:image"},
-            {"name": "twitter:image"},
-        ):
-            tag = soup.find("meta", attrs=selector)
-
-            if tag and tag.get("content"):
-                image_url = tag["content"].strip()
-
-                if image_url:
-                    break
-
-        if image_url:
-            if image_url.startswith("//"):
-                image_url = "https:" + image_url
-
-            elif image_url.startswith("/"):
-                parsed = urlparse(url)
-
-                image_url = (
-                    parsed.scheme
-                    + "://"
-                    + parsed.netloc
-                    + image_url
-                )
-
-            return download_image(image_url)
-
-    except Exception as error:
-        logging.warning("خطای دریافت عکس: %s", error)
-
-    return None
-
-
-def download_image(image_url):
-    try:
-        if not image_url.startswith(("http://", "https://")):
-            return None
-
-        response = requests.get(
-            image_url,
-            headers=HEADERS,
-            timeout=20,
-            stream=True
+        tag = soup.find(
+            "meta",
+            property="og:image"
         )
 
-        response.raise_for_status()
+        if not tag:
+            tag = soup.find(
+                "meta",
+                attrs={"name": "twitter:image"}
+            )
 
-        content_type = response.headers.get(
+        if not tag:
+            return None
+
+        image_url = tag.get("content", "").strip()
+
+        if not image_url:
+            return None
+
+        image_response = requests.get(
+            image_url,
+            headers=HEADERS,
+            timeout=15
+        )
+
+        image_response.raise_for_status()
+
+        content_type = image_response.headers.get(
             "Content-Type", ""
-        ).lower()
+        )
 
         if not content_type.startswith("image/"):
             return None
 
-        data = response.content
-
-        # جلوگیری از دانلود تصاویر بسیار بزرگ
-        if len(data) > 10 * 1024 * 1024:
-            logging.warning("حجم عکس بیش از حد مجاز است.")
+        if len(image_response.content) > 9 * 1024 * 1024:
             return None
 
-        image = BytesIO(data)
+        image = BytesIO(image_response.content)
         image.name = "news.jpg"
-        image.seek(0)
 
         return image
 
     except Exception as error:
-        logging.warning("دانلود عکس ناموفق بود: %s", error)
-
+        print("دریافت تصویر ناموفق بود:", error)
         return None
 
 
 # =========================
-# ساخت پیام خبر
+# آماده‌سازی خلاصه خبر
 # =========================
 
-def make_message(item, source):
-    title = clean(item.get("title", ""))
-
-    summary = clean(item.get("summary", ""))
-
-    link = item.get("link", "")
+def prepare_summary(summary):
+    summary = clean(summary)
 
     if not summary:
-        summary = "برای مطالعه جزئیات بیشتر، خبر کامل را در منبع اصلی بخوانید."
+        return ""
 
-    # خلاصه کوتاه و مناسب تلگرام
+    # حذف بخش‌های رایج تبلیغاتی و اضافی
+    summary = re.sub(
+        r"(برای مطالعه ادامه خبر کلیک کنید|ادامه مطلب)",
+        "",
+        summary
+    )
+
+    summary = re.sub(r"\s+", " ", summary).strip()
+
+    # خلاصه کوتاه و خوانا
     if len(summary) > 350:
         summary = summary[:350].rsplit(" ", 1)[0] + "..."
 
-    # جلوگیری از درج HTML یا لینک‌های طولانی در خلاصه
-    text = (
-        f"{category(title, source)}\n\n"
-        f"📰 {title}\n\n"
-        f"{summary}\n\n"
-        f"✍️ منبع: {source}\n"
-        f"🔗 <a href=\"{link}\">ادامه خبر</a>\n\n"
-        f"📢 اخبار بیشتر در خبر نیوز:\n"
-        f"@KHABARNEWS6"
-    )
+    return summary
 
-    return text
+
+def make_message(title, summary, source):
+    news_category = category(title, source)
+
+    parts = [
+        f"📰 {title}"
+    ]
+
+    if summary:
+        parts.append(summary)
+
+    body = "\n\n".join(parts)
+
+    # منبع در انتهای متن خبری
+    body += f"\n\n/{source}"
+
+    # شناسه کانال در انتهای پیام
+    body += "\n\n@KHABARNEWS6"
+
+    return body
 
 
 # =========================
-# ارسال خبر
+# انتشار خبر
 # =========================
 
-async def send_news(bot, item, source):
-    link = item.get("link", "")
-
-    title = clean(item.get("title", ""))
-
-    if not link or not title:
-        return False
-
-    normalized = normalize_link(link)
-
-    if not normalized or normalized in sent_links:
-        return False
-
-    text = make_message(item, source)
-
-    image = await asyncio.to_thread(
-        get_media,
-        link,
-        item
-    )
-
+async def send_news(app, item, source):
     try:
+        link = item.get("link", "").strip()
+
+        title = clean(item.get("title", ""))
+        raw_summary = item.get("summary", "")
+
+        summary = prepare_summary(raw_summary)
+
+        if not link or not title:
+            return False
+
+        if is_duplicate(link, title):
+            print("خبر تکراری کنار گذاشته شد:", title)
+            return False
+
+        message = make_message(
+            title,
+            summary,
+            source
+        )
+
+        image = await asyncio.to_thread(
+            get_media,
+            link
+        )
+
+        sent = False
+
         if image:
             try:
                 image.seek(0)
 
-                # کپشن تلگرام محدودیت دارد
-                await bot.send_photo(
+                await app.bot.send_photo(
                     chat_id=CHANNEL,
                     photo=image,
-                    caption=text,
-                    parse_mode="HTML"
+                    caption=message[:1024]
                 )
 
-            except TelegramError as error:
-                logging.warning(
-                    "ارسال عکس ناموفق بود؛ ارسال متن: %s",
-                    error
-                )
+                sent = True
 
-                await bot.send_message(
-                    chat_id=CHANNEL,
-                    text=text,
-                    parse_mode="HTML",
-                    disable_web_page_preview=True
-                )
+            except Exception as error:
+                print("ارسال تصویر ناموفق بود:", error)
 
-        else:
-            await bot.send_message(
+        if not sent:
+            await app.bot.send_message(
                 chat_id=CHANNEL,
-                text=text,
-                parse_mode="HTML",
-                disable_web_page_preview=True
+                text=message[:4096]
             )
 
-        sent_links.add(normalized)
+        sent_links.add(link)
+        sent_titles.append(title)
+
         save_history()
 
-        logging.info("خبر ارسال شد: %s", title)
+        print("خبر منتشر شد:", title)
 
         return True
 
     except Exception as error:
-        logging.error("خطای ارسال خبر: %s", error)
-
+        print("خطا در ارسال خبر:", error)
         return False
 
 
 # =========================
-# بررسی خبرهای جدید
+# بررسی و انتخاب خبرها
 # =========================
 
-async def check_news(bot):
+async def check_news(app):
     while True:
-        logging.info("بررسی منابع خبری آغاز شد.")
+        try:
+            print("\n==============================")
+            print("بررسی خبرهای جدید...")
+            print("==============================")
 
-        candidates = []
-        seen_this_cycle = set()
+            candidates = []
 
-        for source, rss in RSS_FEEDS.items():
-            logging.info("بررسی منبع: %s", source)
+            for source, rss in RSS_FEEDS.items():
+                print("بررسی منبع:", source)
 
-            feed = await asyncio.to_thread(
-                get_feed,
-                rss
-            )
+                feed = await asyncio.to_thread(
+                    get_feed,
+                    rss
+                )
 
-            if not feed:
-                continue
-
-            for item in feed.entries[:10]:
-                title = clean(item.get("title", ""))
-                link = item.get("link", "")
-                summary = clean(item.get("summary", ""))
-
-                if not title or not link:
+                if not feed:
                     continue
 
-                normalized = normalize_link(link)
+                for item in feed.entries[:10]:
+                    title = clean(item.get("title", ""))
+                    summary = clean(item.get("summary", ""))
+                    link = item.get("link", "").strip()
 
-                if (
-                    not normalized
-                    or normalized in sent_links
-                    or normalized in seen_this_cycle
-                ):
-                    continue
+                    if not title or not link:
+                        continue
 
-                seen_this_cycle.add(normalized)
+                    if is_duplicate(link, title):
+                        continue
 
-                score = importance(title, summary)
+                    score = importance(title, summary)
 
-                # خبرهای دارای امتیاز مثبت در اولویت‌اند
-                if score >= 1:
-                    candidates.append(
-                        (
-                            score,
-                            source,
-                            item
+                    if score >= 1:
+                        candidates.append(
+                            (score, source, item)
                         )
-                    )
 
-        # خبرهای مهم‌تر در اولویت
-        candidates.sort(
-            key=lambda item: item[0],
-            reverse=True
-        )
-
-        count = 0
-
-        for score, source, item in candidates:
-            if count >= MAX_NEWS:
-                break
-
-            success = await send_news(
-                bot,
-                item,
-                source
+            # اولویت با خبرهای مهم‌تر
+            candidates.sort(
+                key=lambda entry: entry[0],
+                reverse=True
             )
 
-            if success:
-                count += 1
-                await asyncio.sleep(3)
+            print("تعداد خبرهای منتخب:", len(candidates))
 
-        logging.info(
-            "پایان نوبت؛ تعداد خبر ارسال‌شده: %s",
-            count
-        )
+            count = 0
+            considered_titles = []
+
+            for score, source, item in candidates:
+                if count >= MAX_NEWS:
+                    break
+
+                title = clean(item.get("title", ""))
+                link = item.get("link", "").strip()
+
+                if not link or is_duplicate(link, title):
+                    continue
+
+                # حذف موارد مشابه در همین نوبت
+                duplicate_in_batch = False
+
+                for old_title in considered_titles:
+                    similarity = SequenceMatcher(
+                        None,
+                        normalize(title),
+                        normalize(old_title)
+                    ).ratio()
+
+                    if similarity >= 0.84:
+                        duplicate_in_batch = True
+                        break
+
+                if duplicate_in_batch:
+                    continue
+
+                considered_titles.append(title)
+
+                success = await send_news(
+                    app,
+                    item,
+                    source
+                )
+
+                if success:
+                    count += 1
+                    await asyncio.sleep(3)
+
+            print("تعداد اخبار منتشرشده:", count)
+            print("بررسی بعدی ۵ دقیقه دیگر انجام می‌شود.")
+
+        except Exception as error:
+            print("خطا در چرخه بررسی خبرها:", error)
 
         await asyncio.sleep(CHECK_TIME)
 
@@ -600,42 +570,33 @@ async def check_news(bot):
 
 async def main():
     if not TOKEN:
-        logging.error(
-            "TOKEN پیدا نشد؛ متغیر TOKEN را بررسی کنید."
-        )
+        print("خطا: متغیر TOKEN تنظیم نشده است.")
         return
 
-    bot = Bot(token=TOKEN)
+    load_history()
 
-    logging.info("ربات خبر نیوز روشن شد.")
-    logging.info("کانال: %s", CHANNEL)
-    logging.info("حداکثر خبر در هر نوبت: %s", MAX_NEWS)
-    logging.info("فاصله بررسی: %s ثانیه", CHECK_TIME)
+    app = (
+        Application
+        .builder()
+        .token(TOKEN)
+        .build()
+    )
+
+    print("ربات خبر نیوز آماده اجراست.")
+    print("کانال:", CHANNEL)
+    print("حداکثر خبر در هر نوبت:", MAX_NEWS)
+    print("فاصله بررسی:", CHECK_TIME, "ثانیه")
+
+    await app.initialize()
+    await app.start()
 
     try:
-        await bot.initialize()
-
-        # بررسی دسترسی به تلگرام و کانال
-        me = await bot.get_me()
-        logging.info("ربات متصل شد: @%s", me.username)
-
-        chat = await bot.get_chat(CHANNEL)
-        logging.info("کانال شناسایی شد: %s", chat.title)
-
-        await check_news(bot)
-
-    except asyncio.CancelledError:
-        raise
-
-    except Exception as error:
-        logging.exception("خطای اصلی ربات: %s", error)
+        await check_news(app)
 
     finally:
-        await bot.shutdown()
+        await app.stop()
+        await app.shutdown()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
-
